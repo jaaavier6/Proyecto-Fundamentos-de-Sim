@@ -12,4 +12,17 @@ log_reparaciones = pd.read_csv("log_reparaciones_historico.csv", sep=";", decima
 
 ##################### PARTE 1a ##########################
 
-print(log_operacional["event_type"].value_counts())
+#revisar que los datos estén "limpios"
+#print(log_operacional["event_type"].value_counts())
+
+#se ve que hay 41 datos que son "evento_mal_escrito"
+#considerar qué hacer con ellos
+
+##RUTINAS##
+rutinas = log_operacional[log_operacional["event_type"] == "visit"].copy()
+print(rutinas["routine"].value_counts())
+
+
+
+
+
