@@ -266,6 +266,160 @@ test_homogeneidad_ks(
     "Intense"
 )
 
+#ahora como todos los grupos nos dieron PPNH hay que estimar lambda(t)
+
+
+#usaremos intervalos de 30 minutos, igual que en el analisis exploratorio
+
+tramos = []
+
+for inicio in range(0, 840, 30):
+    tramos.append([inicio, inicio + 30])
+
+
+def estimar_lambdas(datos, tramos, n_dias):
+
+    lambdas = []
+
+    for tramo in tramos:
+
+        inferior = tramo[0]
+        superior = tramo[1]
+
+        cantidad = np.sum(
+            (datos >= inferior) &
+            (datos < superior)
+        )
+        largo_tramo = superior - inferior
+        # tasa de llegadas por minuto
+        lambda_j = cantidad / (n_dias * largo_tramo)
+        lambdas.append(lambda_j)
+
+    return np.array(lambdas)
+
+
+lambda_standard_flexible = estimar_lambdas(
+    standard_flexible_llegadas,
+    tramos,
+    n_dias
+)
+
+lambda_express = estimar_lambdas(
+    express_llegadas,
+    tramos,
+    n_dias
+)
+
+lambda_intense = estimar_lambdas(
+    intense_llegadas,
+    tramos,
+    n_dias
+)
+
+print("\n TASAS ESTIMADAS")
+
+print("\nStandard + Flexible")
+for i in range(len(tramos)):
+    print(
+        tramos[i],
+        "lambda =",
+        lambda_standard_flexible[i]
+    )
+
+print("\nExpress")
+for i in range(len(tramos)):
+    print(
+        tramos[i],
+        "lambda =",
+        lambda_express[i]
+    )
+
+print("\nIntense")
+for i in range(len(tramos)):
+    print(
+        tramos[i],
+        "lambda =",
+        lambda_intense[i]
+    )
+
+#Ahora calculamos  la acumulada m(t)/m(T) para aplicar un test K_S y verificar que lambda(t) se ajusta a la muestra 
+def calcular_m(t, lambdas, tramos):
+    m = 0
+
+    for i in range(len(tramos)):
+        inferior = tramos[i][0]
+        superior = tramos[i][1]
+        if t >= superior:
+            #sumamos el tramo completo
+            m += lambdas[i] * (superior - inferior)
+        elif t > inferior:
+            #sumamos solo la parte del tramo hasta t
+            m += lambdas[i] * (t - inferior)
+            break
+        else:
+            break
+    return m
+
+#calculamos el nnumero esperado de llegadas
+print("\n m(T) ")
+
+print("Standard + Flexible:",calcular_m(840, lambda_standard_flexible, tramos))
+
+print("Express:",calcular_m(840, lambda_express, tramos))
+
+print("Intense:",calcular_m(840, lambda_intense, tramos))
+
+
+
+def F_modelo(t, lambdas, tramos):
+    m_total = calcular_m(840, lambdas, tramos)
+
+    resultados = []
+    for valor in t:
+        resultados.append(calcular_m(valor, lambdas, tramos) / m_total)
+
+    return np.array(resultados)
+
+
+def ajuste_ks_ppnh(datos, lambdas, tramos, nombre):
+
+    resultado = kstest(
+        datos,
+        lambda t: F_modelo(t, lambdas, tramos))
+
+    print(f"\n Test K-S PPNH: {nombre} ")
+    print("  D       =", resultado.statistic)
+    print("  p-value =", resultado.pvalue)
+
+    if resultado.pvalue < 0.05:
+        print("  => Se RECHAZA el ajuste al PPNH propuesto.")
+    else:
+        print("  => NO se puede rechazar el ajuste al PPNH propuesto.")
+
+print("\n VALIDACION DE LOS PPNH ")
+
+
+ajuste_ks_ppnh(
+    standard_flexible_llegadas,
+    lambda_standard_flexible,
+    tramos,
+    "Standard + Flexible"
+)
+
+ajuste_ks_ppnh(
+    express_llegadas,
+    lambda_express,
+    tramos,
+    "Express"
+)
+
+ajuste_ks_ppnh(
+    intense_llegadas,
+    lambda_intense,
+    tramos,
+    "Intense"
+)
+
 
 plt.show()
 
