@@ -1,7 +1,7 @@
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
-from scipy.stats import chi2
+from scipy.stats import chi2, kruskal, kstest, poisson
 
 
 log = pd.read_csv(
@@ -66,7 +66,7 @@ plt.suptitle(
 )
 
 plt.tight_layout()
-plt.show()
+
 
 #ahora veremos como se comporta el numero de llegadas por perfil
 
@@ -79,36 +79,196 @@ conteos_dia_perfil = (
 
 print(conteos_dia_perfil.head(40))
 
-#comprobaremos con chi- cuadrado si el conteo por periodo es poisson 
+print("\nTEST CHI-CUADRADO PARA POISSON")
+# comprobaremos con chi-cuadrado si el conteo diario es Poisson
 
-from scipy.stats import chi2
+def estimar_alpha(datos):
+    alpha = np.mean(datos)
+    return alpha
 
-print("\nTEST DE DISPERSIÓN PARA POISSON")
+
+def crear_intervalos(alpha):
+    cortes = poisson.ppf(
+        [1/6, 2/6, 3/6, 4/6, 5/6],
+        alpha
+    )
+
+    intervalos = [
+        [0, cortes[0] + 1],
+        [cortes[0] + 1, cortes[1] + 1],
+        [cortes[1] + 1, cortes[2] + 1],
+        [cortes[2] + 1, cortes[3] + 1],
+        [cortes[3] + 1, cortes[4] + 1],
+        [cortes[4] + 1, np.inf]
+    ]
+
+    return intervalos
+
+
+def contar_datos(datos, intervalos):
+    N = np.zeros(len(intervalos))
+
+    for i in range(len(datos)):
+        for j in range(len(intervalos)):
+            if datos[i] >= intervalos[j][0] and datos[i] < intervalos[j][1]:
+                N[j] += 1
+                break
+
+    return N
+
+
+def calcular_T(N, intervalos, alpha):
+    T = 0
+    n = np.sum(N)
+
+    for i in range(len(intervalos)):
+        inferior = intervalos[i][0]
+        superior = intervalos[i][1]
+
+        if superior == np.inf:
+            p_i = 1 - poisson.cdf(inferior - 1, alpha)
+        else:
+            p_i = (
+                poisson.cdf(superior - 1, alpha)
+                - poisson.cdf(inferior - 1, alpha)
+            )
+
+        esperado = n * p_i
+
+        T += ((N[i] - esperado)**2) / esperado
+
+    return T
+
+
+def calcular_pvalue(T, k, m):
+    gl = k - m - 1
+    pvalue = 1 - chi2.cdf(T, gl)
+
+    return pvalue
+
+
 
 for perfil in perfiles:
-    datos = conteos_dia_perfil[perfil]
 
-    n = len(datos)
-    media = datos.mean()
-    varianza = datos.var(ddof=1)
+    print(f"\n---------- {perfil} ----------")
 
-    estadistico = (n - 1) * varianza / media
+    datos = conteos_dia_perfil[perfil].values
 
-    p_inferior = chi2.cdf(estadistico, df=n-1)
-    p_superior = 1 - chi2.cdf(estadistico, df=n-1)
-    p_value = 2 * min(p_inferior, p_superior)
+    alpha = estimar_alpha(datos)
+    intervalos = crear_intervalos(alpha)
 
-    print(f"\n{perfil}")
-    print(f"Media = {media:.3f}")
-    print(f"Varianza = {varianza:.3f}")
-    print(f"Var/Media = {varianza/media:.3f}")
-    print(f"Estadístico = {estadistico:.3f}")
-    print(f"p-value = {p_value:.4f}")
+    N = contar_datos(datos, intervalos)
 
-    if p_value < 0.05:
-        print("=> Se RECHAZA la hipótesis de dispersión Poisson.")
+    T = calcular_T(N, intervalos, alpha)
+
+    pvalue = calcular_pvalue(
+        T,
+        len(intervalos),
+        1
+    )
+
+    print("Lambda:", alpha)
+    print("Intervalos:", intervalos)
+    print("Conteos observados:", N)
+    print("T:", T)
+    print("p-value:", pvalue)
+
+    if pvalue < 0.05:
+        print("Se RECHAZA la hipótesis de ajuste Poisson")
     else:
-        print("=> NO se rechaza la hipótesis de dispersión Poisson.")
+        print("No se puede rechazar la hipótesis de ajuste Poisson")
+
+
+#como no se rechazó ninguna hipotesis podemos seguir con el siguiente paso, 
+#ver si podemos agrupar las muestras 
+
+def aplicar_test_kruskal_wallis(muestras, nombres, alpha=0.05):
+    resultado_test = kruskal(*muestras)
+
+    print(f"\n === Test Kruskal-Wallis: {' vs '.join(nombres)} ===")
+    for nombre, muestra in zip(nombres, muestras):
+        print(f"   {nombre:20s} n = {len(muestra):4d}   "
+            f"mediana = {np.median(muestra):5.2f}")
+    print("  H       =", round(resultado_test.statistic, 4))
+    print("  p-value =", resultado_test.pvalue)
+
+    if resultado_test.pvalue < alpha:
+        print("  => Se RECHAZA la hipótesis de que las muestras vengan de la",
+            "misma distribución")
+        print("     => tiene sentido separar la muestra y analizar cada perfil por separado")
+    else:
+        print("  => NO se puede rechazar la hipótesis de que las muestras vengan de la",
+            "misma distribución")
+        print("     => no hay evidencia para separar la muestra por perfil")
+
+
+standard = conteos_dia_perfil["standard"].values
+express = conteos_dia_perfil["express"].values
+flexible = conteos_dia_perfil["flexible"].values
+intense = conteos_dia_perfil["intense"].values
+
+muestras = [standard, express, flexible, intense]
+nombres = ["Standard", "Express", "Flexible", "Intense"]
+
+comparados = []
+
+for nombre1, muestra1 in zip(nombres, muestras):
+    for nombre2, muestra2 in zip(nombres, muestras):
+        if nombre1 != nombre2 and {nombre1, nombre2} not in comparados:
+            aplicar_test_kruskal_wallis(
+                [muestra1, muestra2],
+                [nombre1, nombre2],
+                alpha=0.05
+            )
+            comparados.append({nombre1, nombre2})
+
+#ahora comprobaremos homogeniedad bajo los grupos que podemos y no agrupar
+
+standard_flexible_llegadas = llegadas[llegadas["profile"].isin(["standard", "flexible"])]["event_time"].values
+
+express_llegadas = llegadas[llegadas["profile"] == "express"]["event_time"].values
+
+intense_llegadas = llegadas[llegadas["profile"] == "intense"]["event_time"].values
+
+
+print("\nAhora comprobare homogeneidad")
+
+T = 840
+
+def test_homogeneidad_ks(datos_t, T, nombre):
+    res = kstest(datos_t, 'uniform', args=(0, T))
+
+    print(f"\n     Test K-S Homogeneidad: {nombre}  ")
+    print(f"  D       = {res.statistic}")
+    print(f"  p-value = {res.pvalue}")
+
+    if res.pvalue < 0.05:
+        print("  => Se RECHAZA que vengan de una Uniforme.")
+    else:
+        print("  => NO se rechaza. Es una Uniforme.")
+
+
+test_homogeneidad_ks(
+    standard_flexible_llegadas,
+    T,
+    "Standard + Flexible"
+)
+
+test_homogeneidad_ks(
+    express_llegadas,
+    T,
+    "Express"
+)
+
+test_homogeneidad_ks(
+    intense_llegadas,
+    T,
+    "Intense"
+)
+
+
+plt.show()
+
 
 
 
