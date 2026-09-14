@@ -259,4 +259,3 @@ log_reparaciones_limpio.loc[filtro_celda, "cell"] = 49
 
 
 
-

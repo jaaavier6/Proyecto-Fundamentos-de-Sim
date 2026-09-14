@@ -4,8 +4,9 @@ import matplotlib.pyplot as plt
 from scipy.stats import chi2, kruskal, kstest, poisson
 
 
+
 log = pd.read_csv(
-    "log_operacional_historico.csv",
+    "log_operacional_limpio.csv",
     sep=";",
     decimal=","
 )
