@@ -294,7 +294,7 @@ reparacion = log_reparaciones_limpio.copy()
 print("datos reparaciones:", len(reparacion))
 print("reparaciones faltantes:",reparacion["repair_duration_min"].isna().sum())
 
-"""
+
 print("------------- DATOS RUTINAS -------------")
 print(rutinas["routine"].describe())
 
@@ -451,7 +451,7 @@ ax[2].set_ylabel("Duración (min)")
 
 plt.tight_layout()
 plt.show()
-"""
+
 
 
 #separar muestras para comparar RUTINAS
