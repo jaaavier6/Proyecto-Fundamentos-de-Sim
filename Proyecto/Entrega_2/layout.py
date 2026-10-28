@@ -1,6 +1,8 @@
 import numpy as np
 from config import LADO_CELDA,PESO_MANHATTAN,PESO_EUCLIDIANA
 
+#def como se calculan los desplazamientos
+
 def coordenadas(celda):
     fila = (celda-1)//7
     columna = 6-((celda-1)%7)

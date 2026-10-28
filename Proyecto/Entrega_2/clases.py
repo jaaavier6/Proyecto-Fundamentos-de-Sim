@@ -1,5 +1,7 @@
 import simpy
 
+#def info de cada elemento
+
 class Usuario:
     def __init__(self,id_usuario,perfil,hora_llegada,velocidad):
         self.id = id_usuario
@@ -16,6 +18,8 @@ class Usuario:
         self.insatisfecho = False
         self.toallas = 0
         self.espera_recepcion = 0
+        self.espera_maquinas = 0
+        self.espera_entrenador = 0
         self.permanencia_maxima = None
         self.tolerancia = None
         self.capacidad_botella = None

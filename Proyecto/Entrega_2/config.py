@@ -1,3 +1,5 @@
+#def reglas y parametros
+
 # horarios en minutos desde las 07:00
 HORA_APERTURA = 0
 FIN_ADMISION = 840
@@ -18,8 +20,7 @@ UMBRAL_TOALLAS = 30
 INTERVALO_REVISION_TOALLAS = 45
 
 # ubicacion de las maquinas
-MAQUINAS = {
-    "press_pecho": [42,47],
+MAQUINAS = {"press_pecho": [42,47],
     "press_hombros": [49,45],
     "aperturas_pecho": [46],
     "jalon_pecho": [36,22],
@@ -47,15 +48,12 @@ TASAS_LLEGADA = {
     "E": [(0,180,5.80),(180,360,7.48),(360,540,6.61),(540,720,9.98),(720,840,11.60)],
     "X": [(0,180,2.50),(180,360,3.31),(360,540,3.31),(540,720,4.99),(720,840,5.80)],
     "F": [(0,180,5.80),(180,360,7.48),(360,540,6.61),(540,720,9.98),(720,840,11.60)],
-    "I": [(0,180,5.00),(180,360,6.62),(360,540,6.62),(540,720,9.98),(720,840,11.60)]
-}
+    "I": [(0,180,5.00),(180,360,6.62),(360,540,6.62),(540,720,9.98),(720,840,11.60)]}
 
-VELOCIDADES = {
-    "E": (55,70,85),
+VELOCIDADES = {"E": (55,70,85),
     "X": (70,85,100),
     "F": (55,70,85),
-    "I": (48,62,76)
-}
+    "I": (48,62,76)}
 
 PRIORIDAD_URGENTE = 1
 PRIORIDAD_REGISTRO = 2
@@ -63,90 +61,34 @@ PRIORIDAD_PERIODICA = 3
 
 TOALLAS_INICIALES = 2
 
-VELOCIDADES_TRABAJADORES = {
-    "recepcionista": (55,70,85),
+VELOCIDADES_TRABAJADORES = {"recepcionista": (55,70,85),
     "entrenador": (65,85,105),
-    "tecnico": (45,60,75)
-}
+    "tecnico": (45,60,75)}
 
-PARAMETROS_PERFIL = {
-    "E": {"permanencia":72,"tolerancia":8,"botella":1.25,"p_cardio":0.40},
+PARAMETROS_PERFIL = {"E": {"permanencia":72,"tolerancia":8,"botella":1.25,"p_cardio":0.40},
     "X": {"permanencia":50,"tolerancia":5,"botella":1.00,"p_cardio":0.15},
     "F": {"permanencia":52,"tolerancia":7,"botella":1.25,"p_cardio":0.35},
-    "I": {"permanencia":70,"tolerancia":float("inf"),"botella":1.50,"p_cardio":0.28}
-}
+    "I": {"permanencia":70,"tolerancia":float("inf"),"botella":1.50,"p_cardio":0.28}}
 
-EJERCICIOS = {
-    "empuje": ["press_pecho","press_hombros","aperturas_pecho"],
+EJERCICIOS = {"empuje": ["press_pecho","press_hombros","aperturas_pecho"],
     "jalon": ["jalon_pecho","remo_sentado","curl_biceps"],
-    "piernas": ["prensa_piernas","extension_piernas","curl_femoral"]
-}
+    "piernas": ["prensa_piernas","extension_piernas","curl_femoral"]}
 
-PROB_TREN_SUPERIOR = {
-    "empuje_principal": {
-        "press_pecho": 0.65,
-        "press_hombros": 0.35
-    },
-    "jalon_principal": {
-        "jalon_pecho": 0.55,
-        "remo_sentado": 0.45
-    }
-}
+PROB_TREN_SUPERIOR = {"empuje_principal": {"press_pecho": 0.65,"press_hombros": 0.35},
+    "jalon_principal": {"jalon_pecho": 0.55,"remo_sentado": 0.45}}
 
 PROB_CUERPO_COMPLETO = {
-    "piernas": {
-        "prensa_piernas": 0.70,
-        "extension_piernas": 0.20,
-        "curl_femoral": 0.10
-    },
-    "empuje": {
-        "press_pecho": 0.60,
-        "press_hombros": 0.30,
-        "aperturas_pecho": 0.10
-    },
-    "jalon": {
-        "jalon_pecho": 0.50,
-        "remo_sentado": 0.40,
-        "curl_biceps": 0.10
-    },
-    "complemento": {
-        "piernas": 0.40,
-        "empuje": 0.30,
-        "jalon": 0.30
-    }
-}
+    "piernas": {"prensa_piernas": 0.70,"extension_piernas": 0.20,"curl_femoral": 0.10},
+    "empuje": {"press_pecho": 0.60, "press_hombros": 0.30, "aperturas_pecho": 0.10},
+    "jalon": {"jalon_pecho": 0.50, "remo_sentado": 0.40, "curl_biceps": 0.10},
+    "complemento": {"piernas": 0.40, "empuje": 0.30, "jalon": 0.30}}
 
 
 PROB_POLEA = {
-    "E": {
-        "empuje":0.18,
-        "jalon":0.22,
-        "piernas":0.12,
-        "tren_superior":0.20,
-        "cuerpo_completo":0.15
-    },
-    "X": {
-        "empuje":0.18,
-        "jalon":0.22,
-        "piernas":0.12,
-        "tren_superior":0.20,
-        "cuerpo_completo":0.15
-    },
-    "F": {
-        "empuje":0.40,
-        "jalon":0.44,
-        "piernas":0.28,
-        "tren_superior":0.38,
-        "cuerpo_completo":0.32
-    },
-    "I": {
-        "empuje":0.40,
-        "jalon":0.44,
-        "piernas":0.28,
-        "tren_superior":0.38,
-        "cuerpo_completo":0.32
-    }
-}
+    "E": {"empuje":0.18,"jalon":0.22, "piernas":0.12, "tren_superior":0.20, "cuerpo_completo":0.15},
+    "X": {"empuje":0.18, "jalon":0.22, "piernas":0.12, "tren_superior":0.20, "cuerpo_completo":0.15},
+    "F": {"empuje":0.40, "jalon":0.44, "piernas":0.28, "tren_superior":0.38, "cuerpo_completo":0.32},
+    "I": {"empuje":0.40, "jalon":0.44, "piernas":0.28, "tren_superior":0.38, "cuerpo_completo":0.32}}
 
 PROB_ASISTENCIA = {
     "press_pecho":       {"E":0.10,"X":0.06,"F":0.12,"I":0.06},
@@ -162,32 +104,20 @@ PROB_ASISTENCIA = {
 }
 
 PROB_RUTINA = {
-    "E": {
-        "empuje":0.20,
-        "jalon":0.20,
-        "piernas":0.20,
-        "tren_superior":0.25,
-        "cuerpo_completo":0.15
-    },
-    "X": {
-        "empuje":0.20,
-        "jalon":0.20,
-        "piernas":0.20,
-        "tren_superior":0.25,
-        "cuerpo_completo":0.15
-    },
-    "F": {
-        "empuje":0.15,
-        "jalon":0.15,
-        "piernas":0.15,
-        "tren_superior":0.30,
-        "cuerpo_completo":0.25
-    },
-    "I": {
-        "empuje":0.25,
-        "jalon":0.25,
-        "piernas":0.25,
-        "tren_superior":0.15,
-        "cuerpo_completo":0.10
-    }
-}
+    "E": {"empuje":0.20, "jalon":0.20, "piernas":0.20, "tren_superior":0.25, "cuerpo_completo":0.15},
+    "X": {"empuje":0.20, "jalon":0.20, "piernas":0.20, "tren_superior":0.25, "cuerpo_completo":0.15},
+    "F": {"empuje":0.15, "jalon":0.15, "piernas":0.15, "tren_superior":0.30, "cuerpo_completo":0.25},
+    "I": {"empuje":0.25, "jalon":0.25, "piernas":0.25, "tren_superior":0.15, "cuerpo_completo":0.10}}
+
+GRUPO_FUERZA = {"press_pecho": "G1", "press_hombros": "G1", "jalon_pecho": "G1", "remo_sentado": "G1", "polea": "G1",
+    "aperturas_pecho": "G2", "curl_biceps": "G2",
+    "prensa_piernas": "G3",
+    "curl_femoral": "G4","extension_piernas": "G4"}
+
+
+
+PARAMETROS_FUERZA = {
+    "G1": {"E": (16, 0.50), "X": (3, 3, 3, 6), "F": (16, 0.50), "I": (16, 0.725)},
+    "G2": {"E": (16, 0.375), "X": (3, 3, 2.5, 5), "F": (16, 0.375), "I": (16, 0.54375)},
+    "G3": {"E": (16, 0.625), "X": (3, 3, 4, 7), "F": (16, 0.625), "I": (16, 0.90625)},
+    "G4": {"E": (16, 0.4375), "X": (3, 3, 3, 5.5), "F": (16, 0.4375), "I": (16, 0.634375)}}
