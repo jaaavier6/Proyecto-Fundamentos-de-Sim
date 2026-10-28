@@ -44,6 +44,20 @@ class Gimnasio:
         minimo,moda,maximo = VELOCIDADES[perfil]
         return self.rng.triangular(minimo,moda,maximo)
 
+    def tiempo_registro(self,perfil):
+        if perfil == "E" or perfil == "F":
+            if self.rng.random() < 0.85:
+                return self.rng.gamma(10,0.16)
+            return self.rng.lognormal(1.05,0.22)
+
+        if perfil == "X":
+            return min(2.2,self.rng.lognormal(0.05,0.28))
+
+        if perfil == "I":
+            if self.rng.random() < 0.75:
+                return self.rng.gamma(9,0.25)
+            return self.rng.lognormal(1.25,0.20)
+
     def velocidad_trabajador(self,tipo):
         minimo,moda,maximo = VELOCIDADES_TRABAJADORES[tipo]
         return self.rng.triangular(minimo,moda,maximo)
@@ -89,20 +103,22 @@ class Gimnasio:
         usuario.admitido = True
         self.admitidos += 1
         self.usuarios_dentro += 1
+
+        self.configurar_usuario(usuario)
+
         print(f"[{self.env.now:.2f}] Usuario {usuario.id} ({usuario.perfil}) entra | ocupacion={self.usuarios_dentro}")
 
         yield self.env.process(self.mover_usuario(usuario,CELDA_PASO))
         yield self.env.process(self.mover_usuario(usuario,CELDA_RECEPCION))
+
         print(f"[{self.env.now:.2f}] Usuario {usuario.id} llega a recepcion")
 
         yield self.env.process(self.registrar_usuario(usuario))
-        self.configurar_usuario(usuario)
 
         yield self.env.process(self.mover_usuario(usuario,CELDA_PASO))
         yield self.env.process(self.mover_usuario(usuario,CELDA_INICIO_ENTRENAMIENTO))
 
-        print(f"[{self.env.now:.2f}] Usuario {usuario.id} llega al inicio del entrenamiento | perfil={usuario.perfil} | permanencia={usuario.permanencia_maxima} | tolerancia={usuario.tolerancia} | cardio={usuario.cardio_planificado}")
-
+        print(f"[{self.env.now:.2f}] Usuario {usuario.id} inicia entrenamiento | perfil={usuario.perfil} | rutina={usuario.tipo_rutina} | ejercicios={usuario.rutina} | cardio={usuario.cardio_planificado}")
 
 
 
@@ -120,6 +136,7 @@ class Gimnasio:
         yield self.cola_recepcion.put(tarea)
         yield fin
 
+
     def proceso_recepcionista(self,recepcionista):
         while True:
             prioridad,orden,tipo,usuario,fin,inicio_espera = yield self.cola_recepcion.get()
@@ -133,15 +150,18 @@ class Gimnasio:
                 usuario.espera_total += espera
 
                 print(f"[{self.env.now:.2f}] Usuario {usuario.id} inicia registro con R{recepcionista.id} | espera={espera:.2f}")
-                yield self.env.timeout(TIEMPO_REGISTRO_PRUEBA)
+
+                duracion = self.tiempo_registro(usuario.perfil)
+                yield self.env.timeout(duracion)
 
                 usuario.toallas = TOALLAS_INICIALES
-                print(f"[{self.env.now:.2f}] Usuario {usuario.id} termina registro con R{recepcionista.id}")
+                self.generar_asistencias(usuario)
+
+                print(f"[{self.env.now:.2f}] Usuario {usuario.id} termina registro con R{recepcionista.id} | duracion={duracion:.2f}")
 
             recepcionista.ocupado = False
             recepcionista.tarea_actual = None
             fin.succeed()
-
 
     def configurar_usuario(self,usuario):
         parametros = PARAMETROS_PERFIL[usuario.perfil]
@@ -149,14 +169,157 @@ class Gimnasio:
         usuario.permanencia_maxima = parametros["permanencia"]
         usuario.tolerancia = parametros["tolerancia"]
         usuario.capacidad_botella = parametros["botella"]
+        usuario.agua = usuario.capacidad_botella
+        usuario.hora_limite = usuario.hora_llegada+usuario.permanencia_maxima
+
         usuario.cardio_planificado = self.rng.random() < parametros["p_cardio"]
 
+        usuario.tipo_rutina = self.generar_tipo_rutina(usuario.perfil)
+        usuario.rutina = self.construir_rutina(usuario,usuario.tipo_rutina)
+        usuario.pendientes = usuario.rutina.copy()
+
+
+    def elegir_probabilidad(self,opciones):
+        valores = list(opciones.keys())
+        probabilidades = list(opciones.values())
+        return str(self.rng.choice(valores,p=probabilidades))
+
+    
+    def rutina_tren_superior(self):
+        empuje_principal = self.elegir_probabilidad(
+            PROB_TREN_SUPERIOR["empuje_principal"]
+        )
+
+        jalon_principal = self.elegir_probabilidad(
+            PROB_TREN_SUPERIOR["jalon_principal"]
+        )
+
+        if empuje_principal == "press_pecho":
+            empuje_secundario = "press_hombros"
+        else:
+            empuje_secundario = "aperturas_pecho"
+
+        if jalon_principal == "jalon_pecho":
+            jalon_secundario = "remo_sentado"
+        else:
+            jalon_secundario = "curl_biceps"
+
+        return {
+            "empuje_principal": empuje_principal,
+            "jalon_principal": jalon_principal,
+            "empuje_secundario": empuje_secundario,
+            "jalon_secundario": jalon_secundario
+        }
+
+    def rutina_cuerpo_completo(self):
+        piernas = self.elegir_probabilidad(PROB_CUERPO_COMPLETO["piernas"])
+        empuje = self.elegir_probabilidad(PROB_CUERPO_COMPLETO["empuje"])
+        jalon = self.elegir_probabilidad(PROB_CUERPO_COMPLETO["jalon"])
+
+        categoria = self.elegir_probabilidad(PROB_CUERPO_COMPLETO["complemento"])
+
+        elegidos = [piernas,empuje,jalon]
+
+        disponibles = [ejercicio for ejercicio in EJERCICIOS[categoria] if ejercicio not in elegidos]
+
+        complemento = str(self.rng.choice(disponibles))
+
+        return {
+            "piernas": piernas,
+            "empuje": empuje,
+            "jalon": jalon,
+            "complemento": complemento
+        }
+
+    def ordenar_rutina(self,perfil,tipo,componentes=None):
+        if tipo == "empuje":
+            if perfil == "X":
+                return ["press_pecho","aperturas_pecho","press_hombros"]
+            return ["press_pecho","press_hombros","aperturas_pecho"]
+
+        if tipo == "jalon":
+            if perfil == "X":
+                return ["jalon_pecho","curl_biceps","remo_sentado"]
+            if perfil == "I":
+                return ["remo_sentado","jalon_pecho","curl_biceps"]
+            return ["jalon_pecho","remo_sentado","curl_biceps"]
+
+        if tipo == "piernas":
+            if perfil == "I":
+                return ["prensa_piernas","curl_femoral","extension_piernas"]
+            return ["prensa_piernas","extension_piernas","curl_femoral"]
+
+        if tipo == "tren_superior":
+            ep = componentes["empuje_principal"]
+            jp = componentes["jalon_principal"]
+            es = componentes["empuje_secundario"]
+            js = componentes["jalon_secundario"]
+
+            if perfil == "E":
+                return [ep,jp,es,js]
+
+            if perfil == "X":
+                return [ep,jp,js,es]
+
+            if perfil == "I":
+                return [ep,es,jp,js]
+
+        if tipo == "cuerpo_completo":
+            piernas = componentes["piernas"]
+            empuje = componentes["empuje"]
+            jalon = componentes["jalon"]
+            complemento = componentes["complemento"]
+
+            if perfil == "X":
+                return [empuje,jalon,piernas,complemento]
+
+            return [piernas,empuje,jalon,complemento]
+
+
+    def construir_rutina(self,usuario,tipo):
+        if tipo in ["empuje","jalon","piernas"]:
+            rutina = self.ordenar_rutina(usuario.perfil,tipo)
+
+        elif tipo == "tren_superior":
+            componentes = self.rutina_tren_superior()
+
+            if usuario.perfil == "F":
+                rutina = list(componentes.values())
+            else:
+                rutina = self.ordenar_rutina(
+                    usuario.perfil,tipo,componentes
+                )
+
+        elif tipo == "cuerpo_completo":
+            componentes = self.rutina_cuerpo_completo()
+
+            if usuario.perfil == "F":
+                rutina = list(componentes.values())
+            else:
+                rutina = self.ordenar_rutina(
+                    usuario.perfil,tipo,componentes
+                )
+
+        if self.rng.random() < PROB_POLEA[usuario.perfil][tipo]:
+            rutina.append("polea")
+
+        return rutina
+
+    def generar_asistencias(self,usuario):
+        usuario.asistencia = {}
+
+        for ejercicio in usuario.rutina:
+            probabilidad = PROB_ASISTENCIA[ejercicio][usuario.perfil]
+            usuario.asistencia[ejercicio] = self.rng.random() < probabilidad
+
+    def generar_tipo_rutina(self,perfil):
+        return self.elegir_probabilidad(PROB_RUTINA[perfil])
 
 env = simpy.Environment()
 gimnasio = Gimnasio(env,seed=0)
 
 gimnasio.iniciar()
-env.run(until=FIN_ADMISION)
+env.run(until=60)
 
 print("\nRESUMEN")
 print("Llegadas:",gimnasio.total_llegadas)

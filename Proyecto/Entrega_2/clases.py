@@ -20,6 +20,10 @@ class Usuario:
         self.tolerancia = None
         self.capacidad_botella = None
         self.cardio_planificado = False
+        self.tipo_rutina = None
+        self.asistencia = {}
+        self.agua = 0
+        self.hora_limite = None
 
 class Maquina:
     def __init__(self,env,tipo,id_maquina,posicion):

@@ -76,5 +76,118 @@ PARAMETROS_PERFIL = {
     "I": {"permanencia":70,"tolerancia":float("inf"),"botella":1.50,"p_cardio":0.28}
 }
 
-# temporal para probar funcionamiento de recepcion
-TIEMPO_REGISTRO_PRUEBA = 2
+EJERCICIOS = {
+    "empuje": ["press_pecho","press_hombros","aperturas_pecho"],
+    "jalon": ["jalon_pecho","remo_sentado","curl_biceps"],
+    "piernas": ["prensa_piernas","extension_piernas","curl_femoral"]
+}
+
+PROB_TREN_SUPERIOR = {
+    "empuje_principal": {
+        "press_pecho": 0.65,
+        "press_hombros": 0.35
+    },
+    "jalon_principal": {
+        "jalon_pecho": 0.55,
+        "remo_sentado": 0.45
+    }
+}
+
+PROB_CUERPO_COMPLETO = {
+    "piernas": {
+        "prensa_piernas": 0.70,
+        "extension_piernas": 0.20,
+        "curl_femoral": 0.10
+    },
+    "empuje": {
+        "press_pecho": 0.60,
+        "press_hombros": 0.30,
+        "aperturas_pecho": 0.10
+    },
+    "jalon": {
+        "jalon_pecho": 0.50,
+        "remo_sentado": 0.40,
+        "curl_biceps": 0.10
+    },
+    "complemento": {
+        "piernas": 0.40,
+        "empuje": 0.30,
+        "jalon": 0.30
+    }
+}
+
+
+PROB_POLEA = {
+    "E": {
+        "empuje":0.18,
+        "jalon":0.22,
+        "piernas":0.12,
+        "tren_superior":0.20,
+        "cuerpo_completo":0.15
+    },
+    "X": {
+        "empuje":0.18,
+        "jalon":0.22,
+        "piernas":0.12,
+        "tren_superior":0.20,
+        "cuerpo_completo":0.15
+    },
+    "F": {
+        "empuje":0.40,
+        "jalon":0.44,
+        "piernas":0.28,
+        "tren_superior":0.38,
+        "cuerpo_completo":0.32
+    },
+    "I": {
+        "empuje":0.40,
+        "jalon":0.44,
+        "piernas":0.28,
+        "tren_superior":0.38,
+        "cuerpo_completo":0.32
+    }
+}
+
+PROB_ASISTENCIA = {
+    "press_pecho":       {"E":0.10,"X":0.06,"F":0.12,"I":0.06},
+    "press_hombros":     {"E":0.12,"X":0.07,"F":0.14,"I":0.08},
+    "aperturas_pecho":   {"E":0.06,"X":0.04,"F":0.08,"I":0.05},
+    "jalon_pecho":       {"E":0.10,"X":0.06,"F":0.12,"I":0.06},
+    "remo_sentado":      {"E":0.10,"X":0.06,"F":0.12,"I":0.06},
+    "curl_biceps":       {"E":0.05,"X":0.03,"F":0.06,"I":0.03},
+    "prensa_piernas":    {"E":0.14,"X":0.09,"F":0.18,"I":0.09},
+    "curl_femoral":      {"E":0.08,"X":0.05,"F":0.10,"I":0.05},
+    "extension_piernas": {"E":0.06,"X":0.04,"F":0.08,"I":0.05},
+    "polea":              {"E":0.15,"X":0.09,"F":0.18,"I":0.10}
+}
+
+PROB_RUTINA = {
+    "E": {
+        "empuje":0.20,
+        "jalon":0.20,
+        "piernas":0.20,
+        "tren_superior":0.25,
+        "cuerpo_completo":0.15
+    },
+    "X": {
+        "empuje":0.20,
+        "jalon":0.20,
+        "piernas":0.20,
+        "tren_superior":0.25,
+        "cuerpo_completo":0.15
+    },
+    "F": {
+        "empuje":0.15,
+        "jalon":0.15,
+        "piernas":0.15,
+        "tren_superior":0.30,
+        "cuerpo_completo":0.25
+    },
+    "I": {
+        "empuje":0.25,
+        "jalon":0.25,
+        "piernas":0.25,
+        "tren_superior":0.15,
+        "cuerpo_completo":0.10
+    }
+}
