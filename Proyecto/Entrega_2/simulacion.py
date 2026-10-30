@@ -30,6 +30,9 @@ class Gimnasio:
         self.agua = simpy.Container(env,capacity=CAPACIDAD_AGUA,init=CAPACIDAD_AGUA)
         self.toallas = simpy.Container(env,capacity=CAPACIDAD_TOALLAS,init=CAPACIDAD_TOALLAS)
 
+        self.punto_agua = simpy.Resource(env,capacity=1)
+        self.punto_toallas = simpy.Resource(env,capacity=1)
+
     def crear_maquinas(self):
         for tipo,posiciones in MAQUINAS.items():
             for i,posicion in enumerate(posiciones):
@@ -98,8 +101,17 @@ class Gimnasio:
             maquina = self.seleccionar_maquina(usuario, ejercicio)
             if maquina is not None:
                 libre = (maquina.recurso.count == 0 and len(maquina.recurso.queue) == 0)
-                opciones.append((0 if libre else 1, len(maquina.recurso.queue), distancia(usuario.posicion, maquina.posicion), maquina.posicion, i, ejercicio, maquina))
+                espera_acumulada = usuario.espera_por_ejercicio.get(ejercicio,0)
+                tolerancia_restante = usuario.tolerancia-espera_acumulada
 
+                if libre or tolerancia_restante > 1e-9:
+                    opciones.append((0 if libre else 1,
+                        len(maquina.recurso.queue),
+                        distancia(usuario.posicion,maquina.posicion),
+                        maquina.posicion,
+                        i,
+                        ejercicio,
+                        maquina))
         #caso de ningun ejercicio tiene maquina operat
         if len(opciones) == 0:
             return None, None
@@ -122,7 +134,7 @@ class Gimnasio:
             forma, escala = parametros
             return self.rng.gamma(forma, escala)
 
-    def intentar_ejercicio(self, usuario, ejercicio, maquina):
+    def intentar_ejercicio(self, usuario, ejercicio, maquina, tolerancia=None):
         #primero se revisa si el usuario tiene el tiempo suficiente 
         if self.env.now >= CIERRE:
             return "cierre"
@@ -142,12 +154,27 @@ class Gimnasio:
             return "maquina_averiada"
 
         #entonce sis tiene el tiempo, vemos el tiempoq ue puede esperar
-        tiempo_tolerancia = usuario.tolerancia
-        tiempo_permanencia = usuario.hora_limite - self.env.now
-        tiempo_cierre = CIERRE - self.env.now
-        tiempo_dispo = min(tiempo_tolerancia, tiempo_permanencia, tiempo_cierre)
+        if tolerancia is None:
+            tiempo_tolerancia = usuario.tolerancia
+        else:
+            tiempo_tolerancia = tolerancia
+
+        maquina_libre = maquina.recurso.count == 0 and len(maquina.recurso.queue) == 0
+
+        if maquina_libre:
+            tiempo_tolerancia = float("inf")
+        elif tiempo_tolerancia <= 1e-9:
+            return "tolerancia"
+
+        tiempo_permanencia = usuario.hora_limite-self.env.now
+        tiempo_cierre = CIERRE-self.env.now
+
+        tiempo_dispo = min(tiempo_tolerancia,tiempo_permanencia,tiempo_cierre)
+
         if tiempo_dispo <= 0:
-            return "permanencia máxima"
+            if tiempo_permanencia <= 0:
+                return "permanencia máxima"
+            return "cierre"
         inicio_espera = self.env.now
         with maquina.recurso.request() as solicitud_maquina:
             resultado = yield solicitud_maquina | self.env.timeout(tiempo_dispo)
@@ -202,6 +229,269 @@ class Gimnasio:
             entrenador = Entrenador(i+1, self.velocidad_trabajador("entrenador"), CELDA_ENTRENADORES)
             self.entrenadores.append(entrenador)
             self.env.process(self.proceso_entrenador(entrenador))
+
+    def retirar_toallas(self,usuario):
+        limite = min(usuario.hora_limite,CIERRE)
+
+        if self.env.now >= limite:
+            return False
+
+        yield self.env.process(self.mover_usuario(usuario,CELDA_TOALLAS))
+
+        if self.env.now >= limite:
+            return False
+
+        inicio_espera = self.env.now
+
+        with self.punto_toallas.request() as req:
+            tiempo_disponible = limite-self.env.now
+            resultado = yield req | self.env.timeout(tiempo_disponible)
+
+            espera = self.env.now-inicio_espera
+            usuario.espera_toallas += espera
+            usuario.espera_total += espera
+
+            if req not in resultado:
+                return False
+
+            if self.toallas.level <= 0:
+                print(f"[{self.env.now:.2f}] Usuario {usuario.id} encuentra dispensador sin toallas")
+                return False
+
+            cantidad = min(MAX_TOALLAS_RETIRO,int(self.toallas.level))
+
+            yield self.toallas.get(cantidad)
+            yield self.env.timeout(TIEMPO_RETIRO_TOALLAS)
+
+            usuario.toallas += cantidad
+
+            print(f"[{self.env.now:.2f}] Usuario {usuario.id} retira {cantidad} toallas | personales={usuario.toallas} | stock={self.toallas.level}")
+
+        return True
+    
+    def preparar_ejercicio(self,usuario):
+        if usuario.toallas >= TOALLAS_MINIMAS:
+            return True
+
+        return (yield self.env.process(self.retirar_toallas(usuario)))
+
+    def consumo_agua(self,usuario,ejercicio):
+        categoria = CATEGORIA_EJERCICIO[ejercicio]
+        forma,escala = CONSUMO_AGUA[usuario.perfil][categoria]
+
+        requerido = self.rng.gamma(forma,escala)
+        consumido = min(requerido,usuario.agua)
+
+        usuario.agua -= consumido
+
+        if usuario.agua < 1e-9:
+            usuario.agua = 0
+
+        print(f"[{self.env.now:.2f}] Usuario {usuario.id} consume {consumido:.2f} L | botella={usuario.agua:.2f}")
+
+        if usuario.agua == 0:
+            yield self.env.process(self.rellenar_agua(usuario))
+
+    def rellenar_agua(self,usuario):
+        limite = min(usuario.hora_limite,CIERRE)
+
+        if self.env.now >= limite:
+            return False
+
+        yield self.env.process(self.mover_usuario(usuario,CELDA_AGUA))
+
+        if self.env.now >= limite:
+            return False
+
+        inicio_espera = self.env.now
+
+        with self.punto_agua.request() as req:
+            tiempo_disponible = limite-self.env.now
+            resultado = yield req | self.env.timeout(tiempo_disponible)
+
+            espera = self.env.now-inicio_espera
+            usuario.espera_agua += espera
+            usuario.espera_total += espera
+
+            if req not in resultado:
+                return False
+
+            if self.agua.level <= 0:
+                print(f"[{self.env.now:.2f}] Usuario {usuario.id} encuentra bidon sin agua")
+                return False
+
+            cantidad = min(
+                usuario.capacidad_botella-usuario.agua,
+                self.agua.level
+            )
+
+            yield self.agua.get(cantidad)
+            yield self.env.timeout(TIEMPO_RETIRO_AGUA)
+
+            usuario.agua += cantidad
+
+            print(f"[{self.env.now:.2f}] Usuario {usuario.id} rellena {cantidad:.2f} L | botella={usuario.agua:.2f} | stock={self.agua.level:.2f}")
+
+        return True
+
+    def rutina_fuerza(self,usuario):
+        if usuario.perfil == "E":
+            for ejercicio in usuario.rutina:
+                if ejercicio not in usuario.pendientes:
+                    continue
+                puede_continuar = yield self.env.process(self.preparar_ejercicio(usuario))
+
+                if not puede_continuar:
+                    return
+                
+                maquina = self.seleccionar_maquina(usuario,ejercicio)
+                resultado = yield self.env.process(
+                    self.intentar_ejercicio(usuario,ejercicio,maquina)
+                )
+                if resultado == "completado":
+                    yield self.env.process(self.finalizar_ejercicio(usuario,ejercicio))
+
+                if resultado in ["cierre","permanencia máxima"]:
+                    return
+
+            pendientes_reintento = [
+                ejercicio for ejercicio in usuario.rutina
+                if ejercicio in usuario.pendientes
+            ]
+
+            for ejercicio in pendientes_reintento:
+                maquina = self.seleccionar_maquina(usuario,ejercicio)
+
+                resultado = yield self.env.process(
+                    self.intentar_ejercicio(usuario,ejercicio,maquina)
+                )
+
+                if resultado == "tolerancia":
+                    for pendiente in usuario.pendientes.copy():
+                        usuario.pendientes.remove(pendiente)
+                        usuario.omitidos.append(pendiente)
+                    return
+
+                if resultado in ["cierre","permanencia máxima"]:
+                    return
+
+            return
+        if usuario.perfil == "X":
+            while len(usuario.pendientes) > 0:
+                ejercicio = usuario.pendientes[0]
+
+                puede_continuar = yield self.env.process(
+                    self.preparar_ejercicio(usuario)
+                )
+
+                if not puede_continuar:
+                    return
+
+                maquina = self.seleccionar_maquina(usuario,ejercicio)
+
+                if maquina is None:
+                    usuario.pendientes.remove(ejercicio)
+                    usuario.omitidos.append(ejercicio)
+
+                    print(f"[{self.env.now:.2f}] Usuario {usuario.id} omite {ejercicio} porque no hay maquina operativa")
+                    continue
+
+                resultado = yield self.env.process(
+                    self.intentar_ejercicio(usuario,ejercicio,maquina)
+                )
+
+                if resultado == "completado":
+                    yield self.env.process(
+                        self.finalizar_ejercicio(usuario,ejercicio)
+                    )
+
+                elif resultado == "tolerancia":
+                    self.omitir_ejercicio_express(
+                        usuario,
+                        ejercicio,
+                        resultado
+                    )
+
+                elif resultado in ["cierre","permanencia máxima"]:
+                    return
+
+            return
+        
+        if usuario.perfil == "F":
+            while len(usuario.pendientes) > 0:
+                ejercicio,maquina = self.seleccionar_siguiente_ejercicio(usuario)
+
+                if ejercicio is None:
+                    print(f"[{self.env.now:.2f}] Usuario {usuario.id} flexible termina fuerza sin alternativas | pendientes={usuario.pendientes}")
+                    return
+                puede_continuar = yield self.env.process(self.preparar_ejercicio(usuario))
+
+                if not puede_continuar:
+                    return
+
+                maquina = self.seleccionar_maquina(usuario,ejercicio)
+
+                espera_acumulada = usuario.espera_por_ejercicio.get(ejercicio,0)
+                tolerancia_restante = usuario.tolerancia-espera_acumulada
+
+                if tolerancia_restante < 1e-9:
+                    tolerancia_restante = 0
+
+                espera_antes = usuario.espera_maquinas
+
+                resultado = yield self.env.process(
+                    self.intentar_ejercicio(
+                        usuario,
+                        ejercicio,
+                        maquina,
+                        tolerancia_restante
+                    )
+                )
+                if resultado == "completado":
+                    yield self.env.process(self.finalizar_ejercicio(usuario,ejercicio))
+
+                espera_intento = usuario.espera_maquinas-espera_antes
+
+                usuario.espera_por_ejercicio[ejercicio] = min(
+                    usuario.tolerancia,
+                    espera_acumulada+espera_intento
+                )
+                if resultado == "tolerancia":
+                    print(f"[{self.env.now:.2f}] Usuario {usuario.id} agota tolerancia para {ejercicio} | espera acumulada={usuario.espera_por_ejercicio[ejercicio]:.2f}")
+
+                if resultado in ["cierre","permanencia máxima"]:
+                    return
+
+            return
+
+        if usuario.perfil == "I":
+            while len(usuario.pendientes) > 0:
+                ejercicio = usuario.pendientes[0]
+                puede_continuar = yield self.env.process(self.preparar_ejercicio(usuario))
+
+                if not puede_continuar:
+                    return
+                
+                maquina = self.seleccionar_maquina(usuario,ejercicio)
+
+                if maquina is None:
+                    return
+
+                resultado = yield self.env.process(
+                    self.intentar_ejercicio(
+                        usuario,
+                        ejercicio,
+                        maquina,
+                        float("inf")
+                    )
+                )
+                if resultado == "completado":
+                    yield self.env.process(self.finalizar_ejercicio(usuario,ejercicio))
+
+                if resultado in ["cierre","permanencia máxima"]:
+                    return
+
+            return
 
     def proceso_entrenador(self, entrenador):
         while True:
@@ -336,6 +626,9 @@ class Gimnasio:
 
         print(f"[{self.env.now:.2f}] Usuario {usuario.id} inicia entrenamiento | perfil={usuario.perfil} | rutina={usuario.tipo_rutina} | ejercicios={usuario.rutina} | cardio={usuario.cardio_planificado}")
 
+        yield self.env.process(self.rutina_fuerza(usuario))
+
+        print(f"[{self.env.now:.2f}] Usuario {usuario.id} termina fuerza | completados={usuario.completados} | pendientes={usuario.pendientes} | omitidos={usuario.omitidos}")
 
     def mover_usuario(self,usuario,destino):
         tiempo = tiempo_desplazamiento(usuario.posicion,destino,usuario.velocidad)
@@ -518,6 +811,16 @@ class Gimnasio:
 
     def generar_tipo_rutina(self,perfil):
         return self.elegir_probabilidad(PROB_RUTINA[perfil])
+
+    def finalizar_ejercicio(self,usuario,ejercicio):
+        usuario.toallas -= TOALLAS_POR_EJERCICIO
+
+        if usuario.toallas < 0:
+            usuario.toallas = 0
+
+        print(f"[{self.env.now:.2f}] Usuario {usuario.id} queda con {usuario.toallas} toallas")
+
+        yield self.env.process(self.consumo_agua(usuario,ejercicio))
 
 
 env = simpy.Environment()

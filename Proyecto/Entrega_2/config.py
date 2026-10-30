@@ -121,3 +121,50 @@ PARAMETROS_FUERZA = {
     "G2": {"E": (16, 0.375), "X": (3, 3, 2.5, 5), "F": (16, 0.375), "I": (16, 0.54375)},
     "G3": {"E": (16, 0.625), "X": (3, 3, 4, 7), "F": (16, 0.625), "I": (16, 0.90625)},
     "G4": {"E": (16, 0.4375), "X": (3, 3, 3, 5.5), "F": (16, 0.4375), "I": (16, 0.634375)}}
+
+TOALLAS_MINIMAS = 1
+TOALLAS_POR_EJERCICIO = 1
+MAX_TOALLAS_RETIRO = 2
+
+TIEMPO_RETIRO_AGUA = 0.75
+TIEMPO_RETIRO_TOALLAS = 0.75
+
+CATEGORIA_EJERCICIO = {
+    "press_pecho":"empuje",
+    "press_hombros":"empuje",
+    "aperturas_pecho":"empuje",
+    "jalon_pecho":"jalon",
+    "remo_sentado":"jalon",
+    "curl_biceps":"jalon",
+    "prensa_piernas":"piernas",
+    "curl_femoral":"piernas",
+    "extension_piernas":"piernas",
+    "polea":"multifuncional"
+}
+
+CONSUMO_AGUA = {
+    "E": {
+        "empuje":(9,0.03),
+        "jalon":(9,0.03),
+        "piernas":(9,0.04),
+        "multifuncional":(9,0.03)
+    },
+    "X": {
+        "empuje":(9,0.03),
+        "jalon":(9,0.03),
+        "piernas":(9,0.04),
+        "multifuncional":(9,0.03)
+    },
+    "F": {
+        "empuje":(9,0.03),
+        "jalon":(9,0.03),
+        "piernas":(9,0.04),
+        "multifuncional":(9,0.03)
+    },
+    "I": {
+        "empuje":(9,0.045),
+        "jalon":(9,0.045),
+        "piernas":(9,0.06),
+        "multifuncional":(9,0.045)
+    }
+}

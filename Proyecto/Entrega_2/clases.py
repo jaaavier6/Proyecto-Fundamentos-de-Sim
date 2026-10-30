@@ -28,6 +28,9 @@ class Usuario:
         self.asistencia = {}
         self.agua = 0
         self.hora_limite = None
+        self.espera_por_ejercicio = {}
+        self.espera_agua = 0
+        self.espera_toallas = 0
 
 class Maquina:
     def __init__(self,env,tipo,id_maquina,posicion):
