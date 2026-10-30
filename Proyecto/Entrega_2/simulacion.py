@@ -17,6 +17,10 @@ class Gimnasio:
         self.eventos_log = []
         self.aviso_reparacion = self.env.event() #para avisar que tecnico termina reparacion de maquina que estan esperando
 
+        self.cierre_iniciado = False
+        self.fin_replica = self.env.event()
+        self.aviso_estado_cierre = self.env.event()
+
         self.usuarios_dentro = 0
         self.total_llegadas = 0
         self.admitidos = 0
@@ -49,6 +53,7 @@ class Gimnasio:
         self.punto_agua = simpy.Resource(env,capacity=1)
         self.punto_toallas = simpy.Resource(env,capacity=1)
 
+
         #reposiciones de insumos
         self.solicitudes_reposicion = {
             "water":None,
@@ -58,12 +63,10 @@ class Gimnasio:
             "water":None,
             "towels":None}
 
-        #eventos para despertar usuarios que esperan stock
         self.aviso_stock = {
             "water":self.env.event(),
             "towels":self.env.event()}
 
-        #quiebres de stock
         self.quiebre_activo = {
             "water":False,
             "towels":False}
@@ -80,10 +83,11 @@ class Gimnasio:
             "water":0,
             "towels":0}
 
-        #cantidad efectivamente repuesta
         self.cantidad_repuesta = {
             "water":0,
             "towels":0}
+        
+
 
     def registrar_log(self, evento, usuario=None, tipo_entidad="user", identificador="", ubicacion=None, recurso="", detalles=None):
         #atualizar numerodel evento
@@ -1023,9 +1027,7 @@ class Gimnasio:
 
             maquina.operativa = True
 
-            maquina.tiempo_falla += (
-                self.env.now-maquina.inicio_falla
-            )
+            maquina.tiempo_falla += max(0,min(self.env.now,CIERRE)-maquina.inicio_falla)
 
             maquina.inicio_falla = None
 
@@ -1045,11 +1047,9 @@ class Gimnasio:
 
             self.notificar_reparacion()
 
-            tecnico.ocupado = False
-            tecnico.tarea_actual = None
-
             #si no quedan fallas pendientes vuelve a recepcion
             if len(self.cola_reparaciones.items) == 0:
+                tecnico.tarea_actual = "retorno"
 
                 origen = tecnico.posicion
                 destino = CELDA_RECEPCION
@@ -1091,7 +1091,11 @@ class Gimnasio:
                             "duration":round(float(tiempo_viaje),4)
                         }
                     )
-    
+
+                tecnico.ocupado = False
+                tecnico.tarea_actual = None
+                self.notificar_estado_cierre()
+                    
     def duracion_reparacion(self,tipo):
 
         if tipo == "trotadora":
@@ -1540,37 +1544,163 @@ class Gimnasio:
             )
 
             self.cola_recepcion.put(tarea_urgente)
+
+    def esperar_stock(self,usuario,insumo,limite):
+
+        if self.env.now >= limite:
+            return False
+
+        #asegura que exista/promueva la reposicion urgente
+        self.activar_quiebre(insumo)
+
+        aviso = self.aviso_stock[insumo]
+
+        inicio_espera = self.env.now
+
+        resultado = yield (
+            aviso
+            | self.env.timeout(
+                limite-self.env.now
+            )
+        )
+
+        espera = self.env.now-inicio_espera
+
+        if insumo == "water":
+            usuario.espera_agua += espera
+        else:
+            usuario.espera_toallas += espera
+
+        usuario.espera_total += espera
+
+        if aviso not in resultado:
+            return False
+
+        #puede haber vuelto el stock justo al alcanzar
+        #permanencia/cierre: no puede iniciar otro retiro
+        if self.env.now >= limite:
+            return False
+
+        return True
             
     def retirar_toallas(self,usuario):
-        limite = min(usuario.hora_limite,CIERRE)
+
+        limite = min(
+            usuario.hora_limite,
+            CIERRE
+        )
+
         if self.env.now >= limite:
             return False
-        llego = yield self.env.process(self.mover_usuario(usuario, CELDA_TOALLAS))
+
+        llego = yield self.env.process(
+            self.mover_usuario(
+                usuario,
+                CELDA_TOALLAS
+            )
+        )
+
         if not llego:
             return False
-        if self.env.now >= limite:
-            return False
-        inicio_espera = self.env.now
-        with self.punto_toallas.request() as req:
-            tiempo_disponible = limite-self.env.now
-            resultado = yield req | self.env.timeout(tiempo_disponible)
-            espera = self.env.now-inicio_espera
-            usuario.espera_toallas += espera
-            usuario.espera_total += espera
-            if req not in resultado:
-                return False
-            if self.toallas.level <= 0:
-                self.registrar_log(evento="towels_stockout", tipo_entidad="supply", identificador="towels", ubicacion=CELDA_TOALLAS, recurso="towels", detalles={"remaining_stock": self.toallas.level})
-                return False
-            cantidad = min(MAX_TOALLAS_RETIRO,int(self.toallas.level))
-            stock_anterior = self.toallas.level
 
-            yield self.env.timeout(TIEMPO_RETIRO_TOALLAS)
-            yield self.toallas.get(cantidad)
+        while True:
 
-            usuario.toallas += cantidad
-            self.registrar_log(evento="towels_pickup_end", usuario=usuario, recurso="towels", detalles={"amount": cantidad, "pickup_duration": TIEMPO_RETIRO_TOALLAS, "stock_before": stock_anterior, "remaining_stock": self.toallas.level, "towels_personal": usuario.toallas})
-        return True
+            if self.env.now >= limite:
+                return False
+
+            inicio_espera = self.env.now
+
+            with self.punto_toallas.request() as req:
+
+                tiempo_disponible = (
+                    limite-self.env.now
+                )
+
+                resultado = yield (
+                    req
+                    | self.env.timeout(
+                        tiempo_disponible
+                    )
+                )
+
+                espera = (
+                    self.env.now-inicio_espera
+                )
+
+                usuario.espera_toallas += espera
+                usuario.espera_total += espera
+
+                if req not in resultado:
+                    return False
+
+                #si esta vacio NO esperamos
+                #manteniendo bloqueado el punto
+                if self.toallas.level > 0:
+
+                    cantidad = min(
+                        MAX_TOALLAS_RETIRO,
+                        int(self.toallas.level)
+                    )
+
+                    stock_anterior = (
+                        self.toallas.level
+                    )
+
+                    #el retiro ya iniciado es
+                    #no interrumpible
+                    yield self.env.timeout(
+                        TIEMPO_RETIRO_TOALLAS
+                    )
+
+                    #el stock se descuenta
+                    #al TERMINAR los 0.75 min
+                    yield self.toallas.get(
+                        cantidad
+                    )
+
+                    usuario.toallas += cantidad
+
+                    self.registrar_log(
+                        evento="towels_pickup_end",
+                        usuario=usuario,
+                        recurso="towels",
+                        detalles={
+                            "amount":cantidad,
+                            "pickup_duration":
+                                TIEMPO_RETIRO_TOALLAS,
+                            "stock_before":
+                                stock_anterior,
+                            "remaining_stock":
+                                self.toallas.level,
+                            "towels_personal":
+                                usuario.toallas
+                        }
+                    )
+
+                    #el quiebre comienza JUSTO
+                    #cuando este retiro deja stock 0
+                    if self.toallas.level <= 0:
+                        self.activar_quiebre(
+                            "towels"
+                        )
+
+                    return True
+
+            #salimos del with antes de esperar:
+            #asi el punto queda libre para reposicion
+            pudo_continuar = yield self.env.process(
+                self.esperar_stock(
+                    usuario,
+                    "towels",
+                    limite
+                )
+            )
+
+            if not pudo_continuar:
+                return False
+
+            #volvio stock:
+            #vuelve al comienzo y pide el punto nuevamente
     
     def preparar_ejercicio(self,usuario):
         if usuario.toallas >= TOALLAS_MINIMAS:
@@ -1590,39 +1720,127 @@ class Gimnasio:
             yield self.env.process(self.rellenar_agua(usuario))
 
     def rellenar_agua(self,usuario):
-        limite = min(usuario.hora_limite,CIERRE)
+
+        limite = min(
+            usuario.hora_limite,
+            CIERRE
+        )
+
         if self.env.now >= limite:
             return False
-        llego = yield self.env.process(self.mover_usuario(usuario, CELDA_AGUA))
+
+        llego = yield self.env.process(
+            self.mover_usuario(
+                usuario,
+                CELDA_AGUA
+            )
+        )
+
         if not llego:
             return False
-        if self.env.now >= limite:
-            return False
-        inicio_espera = self.env.now
-        with self.punto_agua.request() as req:
-            tiempo_disponible = limite-self.env.now
-            resultado = yield req | self.env.timeout(tiempo_disponible)
-            espera = self.env.now-inicio_espera
-            usuario.espera_agua += espera
-            usuario.espera_total += espera
-            if req not in resultado:
+
+        while True:
+
+            if self.env.now >= limite:
                 return False
-            if self.agua.level <= 0:
-                self.registrar_log(evento="water_stockout", tipo_entidad="supply", identificador="water", ubicacion=CELDA_AGUA, recurso="water", detalles={"remaining_stock": self.agua.level})
-                return False
-            cantidad = min(
-                usuario.capacidad_botella-usuario.agua,
-                self.agua.level
+
+            inicio_espera = self.env.now
+
+            with self.punto_agua.request() as req:
+
+                tiempo_disponible = (
+                    limite-self.env.now
+                )
+
+                resultado = yield (
+                    req
+                    | self.env.timeout(
+                        tiempo_disponible
+                    )
+                )
+
+                espera = (
+                    self.env.now-inicio_espera
+                )
+
+                usuario.espera_agua += espera
+                usuario.espera_total += espera
+
+                if req not in resultado:
+                    return False
+
+                if self.agua.level > 0:
+
+                    cantidad = min(
+                        usuario.capacidad_botella
+                        - usuario.agua,
+                        self.agua.level
+                    )
+
+                    stock_anterior = (
+                        self.agua.level
+                    )
+
+                    #retiro no interrumpible
+                    yield self.env.timeout(
+                        TIEMPO_RETIRO_AGUA
+                    )
+
+                    #el descuento ocurre
+                    #al finalizar los 0.75 min
+                    yield self.agua.get(
+                        cantidad
+                    )
+
+                    usuario.agua += cantidad
+
+                    self.registrar_log(
+                        evento="water_pickup_end",
+                        usuario=usuario,
+                        recurso="water",
+                        detalles={
+                            "amount":round(
+                                float(cantidad),
+                                4
+                            ),
+                            "pickup_duration":
+                                TIEMPO_RETIRO_AGUA,
+                            "stock_before":round(
+                                float(stock_anterior),
+                                4
+                            ),
+                            "remaining_stock":round(
+                                float(self.agua.level),
+                                4
+                            ),
+                            "bottle_level_liters":
+                                round(
+                                    float(usuario.agua),
+                                    4
+                                )
+                        }
+                    )
+
+                    #si este retiro vacio el bidon,
+                    #el quiebre comienza AHORA
+                    if self.agua.level <= 1e-9:
+
+                        self.activar_quiebre(
+                            "water"
+                        )
+
+                    return True
+
+            pudo_continuar = yield self.env.process(
+                self.esperar_stock(
+                    usuario,
+                    "water",
+                    limite
+                )
             )
 
-            stock_anterior = self.agua.level
-
-            yield self.env.timeout(TIEMPO_RETIRO_AGUA)
-            yield self.agua.get(cantidad)
-
-            usuario.agua += cantidad
-            self.registrar_log(evento="water_pickup_end", usuario=usuario, recurso="water", detalles={"amount": round(float(cantidad), 4), "pickup_duration": TIEMPO_RETIRO_AGUA, "stock_before": round(float(stock_anterior), 4), "remaining_stock": round(float(self.agua.level), 4), "bottle_level_liters": round(float(usuario.agua), 4)})
-        return True
+            if not pudo_continuar:
+                return False
 
     def inspecciones_periodicas(self):
 
@@ -1932,6 +2150,7 @@ class Gimnasio:
                 self.registrar_log(evento="worker_travel_interrupted", tipo_entidad="worker", identificador=f"PT-{entrenador.id:02d}", ubicacion=entrenador.posicion, recurso="trainers", detalles={"origin": origen, "destination": destino, "elapsed_time": round(float(tiempo_recorrido), 4), "fraction": round(float(fraccion), 4), "user_id": f"U-{usuario.id:04d}"})
                 entrenador.ocupado = False
                 entrenador.tarea_actual = None
+                self.notificar_estado_cierre()
                 continue
 
             # si el entrenador completa el viaje
@@ -1946,6 +2165,7 @@ class Gimnasio:
             self.registrar_log(evento="trainer_assistance_end", usuario=usuario, tipo_entidad="worker", identificador=f"PT-{entrenador.id:02d}", ubicacion=entrenador.posicion, recurso=self.identificador_maquina(maquina))
             entrenador.ocupado = False
             entrenador.tarea_actual = None
+            self.notificar_estado_cierre()
 
     def solicitar_entrenador(self, usuario, maquina):
         limite = min(usuario.hora_limite, CIERRE)
@@ -1962,6 +2182,7 @@ class Gimnasio:
         #caso de que el user cancela porque alcanzo su limite
         if pedido["llegada"] not in resultado or self.env.now >= limite:
             pedido["cancelado"] = True
+            self.notificar_estado_cierre()
             #avisar al entrenador
             if not pedido["cancelacion"].triggered:
                 pedido["cancelacion"].succeed()
@@ -2005,13 +2226,11 @@ class Gimnasio:
         return None,None
 
     def iniciar(self):
-
-        self.env.process(
-            self.inspecciones_periodicas())
+        self.env.process(self.inspecciones_periodicas())
+        self.env.process(self.proceso_cierre())
 
         for perfil in ["E","X","F","I"]:
-            self.env.process(
-                self.llegadas(perfil))
+            self.env.process(self.llegadas(perfil))
 
     def llegadas(self,perfil):
         while self.env.now < FIN_ADMISION:
@@ -2048,7 +2267,14 @@ class Gimnasio:
                 yield self.env.process(self.salir_usuario(usuario))
                 return
             
-        yield self.env.process(self.registrar_usuario(usuario))
+        registro_completado = yield self.env.process(
+            self.registrar_usuario(usuario))
+
+        if not registro_completado:
+            yield self.env.process(
+                self.salir_usuario(usuario)
+            )
+            return
         
         if self.env.now >= min(usuario.hora_limite, CIERRE):
             yield self.env.process(self.salir_usuario(usuario))
@@ -2101,7 +2327,42 @@ class Gimnasio:
             motivo = "cierre"
         self.registrar_log(evento="user_travel_interrupted", usuario=usuario, detalles={"origin": origen, "destination": destino, "elapsed_time": round(float(tiempo_disponible), 4), "planned_duration": round(float(tiempo), 4), "fraction": round(float(fraccion), 4), "reason": motivo})
         return False
+    
+    def mover_trabajador(self,trabajador,destino,grupo):
+        if trabajador.posicion == destino:
+            return
+        if grupo == "trainers":
+            identificador = f"PT-{trabajador.id:02d}"
+        elif grupo == "technicians":
+            identificador = f"M-{trabajador.id:02d}"
+        else:
+            identificador = f"R-{trabajador.id:02d}"
 
+        origen = trabajador.posicion
+        tiempo = tiempo_desplazamiento(origen,destino,trabajador.velocidad)
+        self.registrar_log(evento="worker_travel_start",tipo_entidad="worker",identificador=identificador,ubicacion=origen,recurso=grupo,detalles={"origin":origen,"destination":destino,"duration":round(float(tiempo),4)})
+        yield self.env.timeout(tiempo)
+        trabajador.posicion = destino
+        self.registrar_log(evento="worker_travel_end",tipo_entidad="worker",identificador=identificador,ubicacion=destino,recurso=grupo,detalles={"origin":origen,"destination":destino,"duration":round(float(tiempo),4)})
+
+    def salir_trabajador(self,trabajador,grupo):
+        if grupo == "trainers":
+            identificador = f"PT-{trabajador.id:02d}"
+        elif grupo == "technicians":
+            identificador = f"M-{trabajador.id:02d}"
+        else:
+            identificador = f"R-{trabajador.id:02d}"
+
+        ruta = [CELDA_ACCESO] if trabajador.posicion == CELDA_RECEPCION else [CELDA_INICIO_ENTRENAMIENTO,CELDA_PASO,CELDA_ACCESO]
+        self.registrar_log(evento="staff_exit_start",tipo_entidad="worker",identificador=identificador,ubicacion=trabajador.posicion,recurso=grupo,detalles={"route":ruta})
+        inicio = self.env.now
+
+        for destino in ruta:
+            yield self.env.process(self.mover_trabajador(trabajador,destino,grupo))
+
+        trabajador.dentro = False
+        trabajador.hora_salida = self.env.now
+        self.registrar_log(evento="staff_exit",tipo_entidad="worker",identificador=identificador,ubicacion=CELDA_ACCESO,recurso=grupo,detalles={"overtime_minutes":round(max(0,self.env.now-CIERRE),4),"exit_travel_time":round(self.env.now-inicio,4)})
 
     def mover_recepcionista(self, recepcionista, destino):
 
@@ -2290,7 +2551,8 @@ class Gimnasio:
         for destino in [CELDA_INICIO_ENTRENAMIENTO, CELDA_PASO, CELDA_ACCESO]:
             yield self.env.process(self.mover_usuario(usuario, destino, respetar_limite=False))
         self.registrar_cambio_ocupacion()
-        self.usuarios_dentro = self.usuarios_dentro -1
+        self.usuarios_dentro -= 1
+        self.notificar_estado_cierre()
         usuario.hora_salida = self.env.now
         self.registrar_log(evento="exit", usuario=usuario,
             detalles={"occupancy": self.usuarios_dentro, "wait_operational": round(usuario.espera_operacional, 4), "stay": round(self.env.now - usuario.hora_llegada, 4), "planned": len(usuario.rutina),
@@ -2299,31 +2561,127 @@ class Gimnasio:
                 "towel_wait": round(usuario.espera_toallas, 4), "water_wait": round(usuario.espera_agua, 4)},)
 
     def registrar_usuario(self,usuario):
+
         self.contador_tareas_recepcion += 1
+
         fin = self.env.event()
-        tarea = (PRIORIDAD_REGISTRO,self.contador_tareas_recepcion,"registro",usuario,fin,self.env.now)
+
+        usuario.registro_iniciado = False
+        usuario.registro_cancelado = False
+
+        tarea = (
+            PRIORIDAD_REGISTRO,
+            self.contador_tareas_recepcion,
+            "registro",
+            usuario,
+            fin,
+            self.env.now
+        )
+
         yield self.cola_recepcion.put(tarea)
-        yield fin
+
+        limite = min(
+            usuario.hora_limite,
+            CIERRE
+        )
+
+        if self.env.now >= limite:
+            usuario.registro_cancelado = True
+            return False
+
+        resultado = yield (
+            fin
+            | self.env.timeout(
+                limite-self.env.now
+            )
+        )
+
+        #registro termino normalmente
+        if fin in resultado:
+            return bool(resultado[fin])
+
+        #si ya habia empezado antes del limite,
+        #el registro es no interrumpible
+        if usuario.registro_iniciado:
+
+            yield fin
+
+            return True
+
+        #seguia esperando: cancela
+        usuario.registro_cancelado = True
+
+        self.notificar_estado_cierre()
+
+        return False
 
     def proceso_recepcionista(self,recepcionista):
 
         while True:
 
-            (
-                prioridad,
+            (prioridad,
                 orden,
                 tipo,
                 entidad,
                 fin,
-                inicio_espera
-            ) = yield self.cola_recepcion.get()
+                inicio_espera) = yield self.cola_recepcion.get()
 
-            recepcionista.ocupado = True
-            recepcionista.tarea_actual = tipo
+            if (
+                tipo == "reposicion"
+                and prioridad != entidad["prioridad"]
+            ):
+                continue
 
             if tipo == "registro":
 
                 usuario = entidad
+
+                limite_usuario = min(
+                    usuario.hora_limite,
+                    CIERRE
+                )
+
+
+                if (
+                    usuario.registro_cancelado
+                    or self.env.now >= limite_usuario
+                ):
+
+                    usuario.registro_cancelado = True
+
+                    if not fin.triggered:
+                        fin.succeed(False)
+
+                    self.notificar_estado_cierre()
+
+                    continue
+
+            elif tipo == "reposicion":
+
+                solicitud = entidad
+
+                if (
+                    solicitud["estado"] == "cancelada"
+                    or self.env.now >= CIERRE
+                ):
+
+                    if not fin.triggered:
+                        fin.succeed(False)
+
+                    self.notificar_estado_cierre()
+
+                    continue
+
+
+            recepcionista.ocupado = True
+            recepcionista.tarea_actual = tipo
+
+
+            if tipo == "registro":
+
+                usuario = entidad
+
+                usuario.registro_iniciado = True
 
                 espera = (
                     self.env.now-inicio_espera
@@ -2366,7 +2724,6 @@ class Gimnasio:
                         "towels":usuario.toallas
                     }
                 )
-
             elif tipo == "reposicion":
 
                 solicitud = entidad
@@ -2377,12 +2734,107 @@ class Gimnasio:
                         solicitud
                     )
                 )
-
             recepcionista.ocupado = False
             recepcionista.tarea_actual = None
 
+            self.notificar_estado_cierre()
+
             if not fin.triggered:
-                fin.succeed()
+                fin.succeed(True)
+
+    def cancelar_tareas_recepcion_cierre(self):
+        for tarea in list(self.cola_recepcion.items):
+
+            (prioridad,
+                orden,
+                tipo,
+                entidad,
+                fin,
+                inicio) = tarea
+
+            if tipo == "registro":
+
+                entidad.registro_cancelado = True
+
+                if not fin.triggered:
+                    fin.succeed(False)
+
+            elif tipo == "reposicion":
+
+                solicitud = entidad
+
+                if solicitud["estado"] == "pendiente":
+
+                    solicitud["estado"] = "cancelada"
+
+                    insumo = solicitud["insumo"]
+
+                    if (self.solicitudes_reposicion[insumo] is solicitud):
+                        self.solicitudes_reposicion[insumo] = None
+
+                        self.tareas_reposicion[insumo] = None
+
+                    if not fin.triggered:
+                        fin.succeed(False)
+
+        self.notificar_estado_cierre()
+
+
+    def notificar_estado_cierre(self):
+
+        aviso = self.aviso_estado_cierre
+        self.aviso_estado_cierre = self.env.event()
+
+        if not aviso.triggered:
+            aviso.succeed()
+
+    def esperar_condicion_cierre(self,condicion):
+
+        while True:
+
+            aviso = self.aviso_estado_cierre
+
+            if condicion():
+                return
+
+            yield aviso
+
+    def proceso_cierre(self):
+        yield self.env.timeout(CIERRE-self.env.now)
+        self.cierre_iniciado = True
+        self.registrar_cambio_ocupacion()
+        self.cancelar_tareas_recepcion_cierre()
+
+        self.registrar_log(evento="close_started",tipo_entidad="system",identificador="system",detalles={"people_present":self.usuarios_dentro,"maintenance_pending":len(self.cola_reparaciones.items)+sum(t.ocupado for t in self.tecnicos),"water_stock":round(float(self.agua.level),4),"towel_stock":round(float(self.toallas.level),4)})
+        self.notificar_estado_cierre()
+
+        #entrenadores: esperan que no quede ninguna asistencia valida ni en ejecucion
+        def entrenadores_listos():
+            pendientes = any(not p["cancelado"] for p in self.cola_entrenadores.items)
+            return not pendientes and all(not e.ocupado for e in self.entrenadores)
+
+        yield self.env.process(self.esperar_condicion_cierre(entrenadores_listos))
+        salidas = [self.env.process(self.salir_trabajador(e,"trainers")) for e in self.entrenadores]
+        if salidas:
+            yield self.env.all_of(salidas)
+
+        #tecnico: espera que salga el ultimo usuario y que terminen reparaciones
+        yield self.env.process(self.esperar_condicion_cierre(lambda: self.usuarios_dentro == 0))
+        yield self.env.process(self.esperar_condicion_cierre(lambda: len(self.cola_reparaciones.items) == 0 and all(not t.ocupado for t in self.tecnicos)))
+
+        salidas = [self.env.process(self.salir_trabajador(t,"technicians")) for t in self.tecnicos]
+        if salidas:
+            yield self.env.all_of(salidas)
+
+        #recepcionistas: salen al final
+        yield self.env.process(self.esperar_condicion_cierre(lambda: all(not r.ocupado for r in self.recepcionistas)))
+        salidas = [self.env.process(self.salir_trabajador(r,"receptionists")) for r in self.recepcionistas]
+        if salidas:
+            yield self.env.all_of(salidas)
+
+        if not self.fin_replica.triggered:
+            self.fin_replica.succeed(self.env.now)
+
     def configurar_usuario(self,usuario):
         parametros = PARAMETROS_PERFIL[usuario.perfil]
 
@@ -2514,21 +2966,24 @@ class Gimnasio:
         yield self.env.process(self.consumo_agua(usuario,ejercicio))
 
 
+
 env = simpy.Environment()
 gimnasio = Gimnasio(env,seed=2)
 
 gimnasio.iniciar()
-env.run(until=180)
+env.run(until=gimnasio.fin_replica)
 
 gimnasio.registrar_cambio_ocupacion()
 #gimnasio.guardar_log("log_prueba_reasignacion.csv",generar_log=True)
 #gimnasio.guardar_log("log_prueba_reasignacion_seeds.csv",generar_log=True)
 #gimnasio.guardar_log("log_prueba_fallas.csv", generar_log=True)
 #gimnasio.guardar_log("log_prueba_120min.csv", generar_log=True)
-gimnasio.guardar_log("log_prueba_cardio.csv",generar_log=True)
+#gimnasio.guardar_log("log_prueba_cardio.csv",generar_log=True)
+#gimnasio.guardar_log( "log_prueba_reposicion_urgente.csv", generar_log=True)
+gimnasio.guardar_log("log_prueba_cierre.csv",generar_log=True)
 
-print("Ocupacion promedio:", gimnasio.area_ocupacion / env.now)
-print("Proporcion a capacidad:", gimnasio.tiempo_capacidad / env.now)
+print("Ocupacion promedio:",gimnasio.area_ocupacion/CIERRE)
+print("Proporcion a capacidad:",gimnasio.tiempo_capacidad/CIERRE)
 
 print("\nRESUMEN")
 print("Llegadas:",gimnasio.total_llegadas)
@@ -2550,3 +3005,5 @@ for evento in gimnasio.eventos_log:
 print("Desplazamientos de usuarios interrumpidos:", interrupciones_usuarios)
 print("Desplazamientos de entrenadores interrumpidos:", interrupciones_entrenadores)
 print("Fallas de maquinas:",gimnasio.total_fallas)
+print("Fin efectivo:",env.now)
+print("Operacion post-cierre:",max(0,env.now-CIERRE))
