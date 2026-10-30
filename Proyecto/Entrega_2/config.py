@@ -1,5 +1,14 @@
 #def reglas y parametros
 
+PERFILES_LOG = {"E": "standard", "X": "express", "F": "flexible", "I": "intense"}
+
+EJERCICIOS_LOG = {
+    "press_pecho": "chest_press", "press_hombros": "shoulder_press", "aperturas_pecho": "chest_fly",
+    "jalon_pecho": "lat_pulldown", "remo_sentado": "seated_row",
+    "curl_biceps": "biceps_curl", "prensa_piernas": "leg_press", "curl_femoral": "leg_curl",
+    "extension_piernas": "leg_extension", "polea": "cable", "trotadora": "treadmill"}
+
+
 # horarios en minutos desde las 07:00
 HORA_APERTURA = 0
 FIN_ADMISION = 840

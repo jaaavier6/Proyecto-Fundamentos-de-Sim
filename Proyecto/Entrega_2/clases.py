@@ -31,6 +31,8 @@ class Usuario:
         self.espera_por_ejercicio = {}
         self.espera_agua = 0
         self.espera_toallas = 0
+        self.hora_salida = None
+        self.espera_operacional = 0
 
 class Maquina:
     def __init__(self,env,tipo,id_maquina,posicion):
