@@ -177,3 +177,68 @@ CONSUMO_AGUA = {
         "multifuncional":(9,0.045)
     }
 }
+
+PROB_FALLA = {
+    "trotadora":0.005,
+    "press_pecho":0.004,
+    "press_hombros":0.004,
+    "aperturas_pecho":0.004,
+    "jalon_pecho":0.004,
+    "remo_sentado":0.004,
+    "curl_biceps":0.004,
+    "prensa_piernas":0.005,
+    "curl_femoral":0.005,
+    "extension_piernas":0.005,
+    "polea":0.006
+}
+
+
+PARAMETROS_DURACION_CARDIO = {
+    "E":{
+        "modelo":"gamma_acotada",
+        "shape":9,
+        "scale":2.0,
+        "maximo":28
+    },
+
+    "X":{
+        "modelo":"beta_escalada",
+        "a":3,
+        "b":3,
+        "minimo":6,
+        "maximo":12
+    },
+
+    "F":{
+        "modelo":"mezcla",
+        "p_gamma":0.75,
+        "gamma_shape":12,
+        "gamma_scale":1.2,
+        "log_mu":3.0,
+        "log_sigma":0.18
+    },
+
+    "I":{
+        "modelo":"mezcla",
+        "p_gamma":0.70,
+        "gamma_shape":10,
+        "gamma_scale":2.3,
+        "log_mu":3.55,
+        "log_sigma":0.20
+    }
+}
+
+PARAMETROS_REPOSICION = {
+    "water":{
+        "p_gamma":0.75,
+        "gamma_shape":16,
+        "gamma_scale":0.35,
+        "log_mu":2.45,
+        "log_sigma":0.30
+    },
+
+    "towels":{
+        "gamma_shape":16,
+        "gamma_scale":0.25
+    }
+}

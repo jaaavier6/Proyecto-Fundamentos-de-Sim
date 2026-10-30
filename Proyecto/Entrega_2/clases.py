@@ -33,6 +33,10 @@ class Usuario:
         self.espera_toallas = 0
         self.hora_salida = None
         self.espera_operacional = 0
+        self.reasignacion_pendiente = None
+        self.espera_cardio = 0
+        self.cardio_completado = False
+        self.cardio_permitido = True
 
 class Maquina:
     def __init__(self,env,tipo,id_maquina,posicion):
@@ -45,7 +49,8 @@ class Maquina:
         self.usuario_actual = None
         self.tiempo_uso = 0
         self.tiempo_falla = 0
-
+        self.inicio_falla = None
+        self.numero_fallas = 0
 class Recepcionista:
     def __init__(self,id_recepcionista,velocidad,posicion):
         self.id = id_recepcionista

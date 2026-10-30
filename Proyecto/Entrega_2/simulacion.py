@@ -33,15 +33,57 @@ class Gimnasio:
         self.cola_recepcion = simpy.PriorityStore(env)
         self.contador_tareas_recepcion = 0
         self.crear_recepcionistas()
+
         self.entrenadores = []
         self.cola_entrenadores = simpy.Store(env)
         self.crear_entrenadores()
+
+        self.tecnicos = []
+        self.cola_reparaciones = simpy.Store(env)
+        self.total_fallas = 0
+        self.crear_tecnicos()
 
         self.agua = simpy.Container(env,capacity=CAPACIDAD_AGUA,init=CAPACIDAD_AGUA)
         self.toallas = simpy.Container(env,capacity=CAPACIDAD_TOALLAS,init=CAPACIDAD_TOALLAS)
 
         self.punto_agua = simpy.Resource(env,capacity=1)
         self.punto_toallas = simpy.Resource(env,capacity=1)
+
+        #reposiciones de insumos
+        self.solicitudes_reposicion = {
+            "water":None,
+            "towels":None}
+
+        self.tareas_reposicion = {
+            "water":None,
+            "towels":None}
+
+        #eventos para despertar usuarios que esperan stock
+        self.aviso_stock = {
+            "water":self.env.event(),
+            "towels":self.env.event()}
+
+        #quiebres de stock
+        self.quiebre_activo = {
+            "water":False,
+            "towels":False}
+
+        self.inicio_quiebre = {
+            "water":None,
+            "towels":None}
+
+        self.episodios_quiebre = {
+            "water":0,
+            "towels":0}
+
+        self.duracion_quiebre = {
+            "water":0,
+            "towels":0}
+
+        #cantidad efectivamente repuesta
+        self.cantidad_repuesta = {
+            "water":0,
+            "towels":0}
 
     def registrar_log(self, evento, usuario=None, tipo_entidad="user", identificador="", ubicacion=None, recurso="", detalles=None):
         #atualizar numerodel evento
@@ -91,6 +133,20 @@ class Gimnasio:
             for i,posicion in enumerate(posiciones):
                 maquina = Maquina(self.env,tipo,i+1,posicion)
                 self.maquinas.append(maquina)
+
+    def crear_tecnicos(self):
+        for i in range(N_TECNICOS):
+            tecnico = Tecnico(
+                i+1,
+                self.velocidad_trabajador("tecnico"),
+                CELDA_RECEPCION
+            )
+
+            self.tecnicos.append(tecnico)
+
+            self.env.process(
+                self.proceso_tecnico(tecnico)
+            )
 
     def notificar_reparacion(self):
         aviso = self.aviso_reparacion
@@ -161,6 +217,16 @@ class Gimnasio:
             self.registrar_log(evento="exercise_omitted", usuario=usuario, recurso=EJERCICIOS_LOG[ejercicio], detalles={"reason": "tolerance"})
 
     def seleccionar_maquina(self, usuario, ejercicio):
+        if usuario.reasignacion_pendiente is not None:
+            maquina_reasignada = usuario.reasignacion_pendiente["maquina"]
+
+            if (
+                maquina_reasignada is not None
+                and maquina_reasignada.tipo == ejercicio
+                and maquina_reasignada.operativa
+            ):
+                return maquina_reasignada
+            
         maquinas_disponibles = []
         for maquina in self.maquinas:
             if maquina.tipo == ejercicio and maquina.operativa:
@@ -201,6 +267,29 @@ class Gimnasio:
                 mejor_criterio = criterio
         return mejor_maquina
 
+    def seleccionar_maquina_reasignacion(self,maquina_averiada):
+        opciones = []
+
+        for maquina in self.maquinas:
+            if (
+                maquina.tipo == maquina_averiada.tipo
+                and maquina is not maquina_averiada
+                and maquina.operativa
+            ):
+                opciones.append((
+                    len(maquina.recurso.queue),
+                    distancia(maquina_averiada.posicion,maquina.posicion),
+                    maquina.posicion,
+                    maquina
+                ))
+
+        if len(opciones) == 0:
+            return None
+
+        mejor = min(opciones,key=lambda x:(x[0],x[1],x[2]))
+
+        return mejor[3]
+
     def seleccionar_siguiente_ejercicio(self, usuario):
         if len(usuario.pendientes) == 0:
             return None, None
@@ -240,6 +329,810 @@ class Gimnasio:
             forma, escala = parametros
             return self.rng.gamma(forma, escala)
 
+    def duracion_cardio(self,perfil):
+        p = PARAMETROS_DURACION_CARDIO[perfil]
+
+        if perfil == "E":
+            duracion = self.rng.gamma(
+                p["shape"],
+                p["scale"]
+            )
+
+            return min(
+                p["maximo"],
+                duracion
+            )
+
+        if perfil == "X":
+            beta = self.rng.beta(
+                p["a"],
+                p["b"]
+            )
+
+            return (
+                p["minimo"]
+                + beta*(p["maximo"]-p["minimo"])
+            )
+
+        if perfil in ["F","I"]:
+            if self.rng.random() < p["p_gamma"]:
+                return self.rng.gamma(
+                    p["gamma_shape"],
+                    p["gamma_scale"]
+                )
+
+            return self.rng.lognormal(
+                p["log_mu"],
+                p["log_sigma"]
+            )
+
+    def seleccionar_trotadora(self,usuario):
+        operativas = []
+
+        for maquina in self.maquinas:
+            if maquina.tipo == "trotadora" and maquina.operativa:
+                operativas.append(maquina)
+
+        if len(operativas) == 0:
+            return None
+
+        libres = []
+
+        for maquina in operativas:
+            if (
+                maquina.recurso.count == 0
+                and len(maquina.recurso.queue) == 0
+            ):
+                libres.append(maquina)
+
+        #si existe alguna libre se elige la libre mas cercana
+        if len(libres) > 0:
+            candidatas = libres
+        else:
+            #si todas estan ocupadas se elige la mas cercana
+            candidatas = operativas
+
+        return min(
+            candidatas,
+            key=lambda maquina:(
+                distancia(usuario.posicion,maquina.posicion),
+                maquina.posicion
+            )
+        )
+
+    def esperar_trotadora_operativa( self, usuario, tolerancia_restante):
+        restante = tolerancia_restante
+
+        while self.seleccionar_trotadora(usuario) is None:
+
+            if self.env.now >= CIERRE:
+                return "cierre"
+
+            if self.env.now >= usuario.hora_limite:
+                return "permanencia máxima"
+
+            if restante <= 1e-9:
+                return "tolerancia"
+
+            tiempo_limite = min(
+                usuario.hora_limite,
+                CIERRE
+            ) - self.env.now
+
+            tiempo_espera = min(
+                tiempo_limite,
+                restante
+            )
+
+            aviso = self.aviso_reparacion
+
+            inicio = self.env.now
+
+            yield (
+                aviso
+                | self.env.timeout(tiempo_espera)
+            )
+
+            espera = self.env.now-inicio
+
+            usuario.espera_cardio += espera
+            usuario.espera_total += espera
+
+            if restante != float("inf"):
+                restante = max(
+                    0,
+                    restante-espera
+                )
+
+        return "disponible"
+    def intentar_cardio(self,usuario):
+
+        espera_inicial = usuario.espera_cardio
+
+        while True:
+
+            if self.env.now >= CIERRE:
+                return "cierre"
+
+            if self.env.now >= usuario.hora_limite:
+                return "permanencia máxima"
+
+            espera_usada = (
+                usuario.espera_cardio
+                - espera_inicial
+            )
+
+            if usuario.perfil == "I":
+                tolerancia_restante = float("inf")
+            else:
+                tolerancia_restante = max(
+                    0,
+                    usuario.tolerancia-espera_usada
+                )
+
+            #si viene reasignado por una falla de trotadora
+            info_reasignacion = None
+
+            if (
+                usuario.reasignacion_pendiente is not None
+                and usuario.reasignacion_pendiente["maquina"] is not None
+                and usuario.reasignacion_pendiente["maquina"].tipo == "trotadora"
+            ):
+                info_reasignacion = (
+                    usuario.reasignacion_pendiente
+                )
+
+                maquina = info_reasignacion["maquina"]
+
+            else:
+                #si la falla no tenia otra trotadora disponible
+                if usuario.reasignacion_pendiente is not None:
+
+                    siguiente = usuario.reasignacion_pendiente.get(
+                        "siguiente_turno"
+                    )
+
+                    if (
+                        siguiente is not None
+                        and not siguiente.triggered
+                    ):
+                        siguiente.succeed()
+
+                    usuario.reasignacion_pendiente = None
+
+                maquina = self.seleccionar_trotadora(
+                    usuario
+                )
+
+            #no queda ninguna operativa
+            if maquina is None:
+
+                resultado = yield self.env.process(
+                    self.esperar_trotadora_operativa(
+                        usuario,
+                        tolerancia_restante
+                    )
+                )
+
+                if resultado == "disponible":
+                    continue
+
+                return resultado
+
+            #viajar a la trotadora
+            llego = yield self.env.process(
+                self.mover_usuario(
+                    usuario,
+                    maquina.posicion
+                )
+            )
+
+            if not llego:
+
+                if info_reasignacion is not None:
+                    siguiente = info_reasignacion[
+                        "siguiente_turno"
+                    ]
+
+                    if (
+                        siguiente is not None
+                        and not siguiente.triggered
+                    ):
+                        siguiente.succeed()
+
+                    usuario.reasignacion_pendiente = None
+
+                if self.env.now >= CIERRE:
+                    return "cierre"
+
+                return "permanencia máxima"
+
+            if self.env.now >= CIERRE:
+                return "cierre"
+
+            if self.env.now >= usuario.hora_limite:
+                return "permanencia máxima"
+
+            #puede haber fallado mientras caminaba
+            if not maquina.operativa:
+
+                if info_reasignacion is not None:
+                    siguiente = info_reasignacion[
+                        "siguiente_turno"
+                    ]
+
+                    if (
+                        siguiente is not None
+                        and not siguiente.triggered
+                    ):
+                        siguiente.succeed()
+
+                    usuario.reasignacion_pendiente = None
+
+                continue
+
+            #si fue una reasignacion por falla,
+            #respetar el orden anterior
+            if info_reasignacion is not None:
+
+                turno = info_reasignacion[
+                    "turno_reasignacion"
+                ]
+
+                if not turno.triggered:
+
+                    espera_usada = (
+                        usuario.espera_cardio
+                        - espera_inicial
+                    )
+
+                    if usuario.perfil == "I":
+                        tolerancia_turno = float("inf")
+                    else:
+                        tolerancia_turno = max(
+                            0,
+                            usuario.tolerancia-espera_usada
+                        )
+
+                    tiempo_permanencia = (
+                        usuario.hora_limite
+                        - self.env.now
+                    )
+
+                    tiempo_cierre = (
+                        CIERRE-self.env.now
+                    )
+
+                    tiempo_turno = min(
+                        tolerancia_turno,
+                        tiempo_permanencia,
+                        tiempo_cierre
+                    )
+
+                    if tiempo_turno <= 1e-9:
+
+                        siguiente = info_reasignacion[
+                            "siguiente_turno"
+                        ]
+
+                        if (
+                            siguiente is not None
+                            and not siguiente.triggered
+                        ):
+                            siguiente.succeed()
+
+                        if tiempo_permanencia <= 0:
+                            return "permanencia máxima"
+
+                        if tiempo_cierre <= 0:
+                            return "cierre"
+
+                        return "tolerancia"
+
+                    inicio_turno = self.env.now
+
+                    resultado_turno = yield (
+                        turno
+                        | self.env.timeout(tiempo_turno)
+                    )
+
+                    espera_turno = (
+                        self.env.now-inicio_turno
+                    )
+
+                    usuario.espera_cardio += espera_turno
+                    usuario.espera_total += espera_turno
+
+                    if turno not in resultado_turno:
+
+                        siguiente = info_reasignacion[
+                            "siguiente_turno"
+                        ]
+
+                        if (
+                            siguiente is not None
+                            and not siguiente.triggered
+                        ):
+                            siguiente.succeed()
+
+                        if self.env.now >= CIERRE:
+                            return "cierre"
+
+                        if self.env.now >= usuario.hora_limite:
+                            return "permanencia máxima"
+
+                        return "tolerancia"
+
+            #recalcular tolerancia despues de cualquier espera
+            espera_usada = (
+                usuario.espera_cardio
+                - espera_inicial
+            )
+
+            if usuario.perfil == "I":
+                tiempo_tolerancia = float("inf")
+            else:
+                tiempo_tolerancia = max(
+                    0,
+                    usuario.tolerancia-espera_usada
+                )
+
+            maquina_libre = (
+                maquina.recurso.count == 0
+                and len(maquina.recurso.queue) == 0
+            )
+
+            if (
+                not maquina_libre
+                and tiempo_tolerancia <= 1e-9
+            ):
+                return "tolerancia"
+
+            tiempo_permanencia = (
+                usuario.hora_limite-self.env.now
+            )
+
+            tiempo_cierre = (
+                CIERRE-self.env.now
+            )
+
+            if maquina_libre:
+                tiempo_dispo = min(
+                    tiempo_permanencia,
+                    tiempo_cierre
+                )
+            else:
+                tiempo_dispo = min(
+                    tiempo_tolerancia,
+                    tiempo_permanencia,
+                    tiempo_cierre
+                )
+
+            if tiempo_dispo <= 1e-9:
+                if tiempo_permanencia <= 0:
+                    return "permanencia máxima"
+
+                return "cierre"
+
+            inicio_espera = self.env.now
+
+            with maquina.recurso.request() as solicitud:
+
+                solicitud.usuario = usuario
+                solicitud.ejercicio = "trotadora"
+                solicitud.aviso_reasignacion = self.env.event()
+
+                #ya entro a la nueva cola:
+                #liberar al siguiente reasignado
+                if info_reasignacion is not None:
+
+                    siguiente = info_reasignacion[
+                        "siguiente_turno"
+                    ]
+
+                    if (
+                        siguiente is not None
+                        and not siguiente.triggered
+                    ):
+                        siguiente.succeed()
+
+                    usuario.reasignacion_pendiente = None
+
+                if not solicitud.triggered:
+                    self.registrar_log(
+                        evento="machine_queue_enter",
+                        usuario=usuario,
+                        recurso=self.identificador_maquina(maquina),
+                        detalles={
+                            "machine_type":"treadmill",
+                            "queue_length":len(
+                                maquina.recurso.queue
+                            )
+                        }
+                    )
+
+                resultado = yield (
+                    solicitud
+                    | self.env.timeout(tiempo_dispo)
+                    | solicitud.aviso_reasignacion
+                )
+
+                espera = (
+                    self.env.now-inicio_espera
+                )
+
+                usuario.espera_cardio += espera
+                usuario.espera_total += espera
+
+                #la trotadora fallo mientras esperaba
+                if solicitud.aviso_reasignacion in resultado:
+
+                    usuario.reasignacion_pendiente = (
+                        resultado[
+                            solicitud.aviso_reasignacion
+                        ]
+                    )
+
+                    continue
+
+                if self.env.now >= CIERRE:
+                    return "cierre"
+
+                if self.env.now >= usuario.hora_limite:
+                    return "permanencia máxima"
+
+                if solicitud not in resultado:
+
+                    if (
+                        tiempo_dispo
+                        == tiempo_tolerancia
+                    ):
+                        return "tolerancia"
+
+                    if (
+                        tiempo_dispo
+                        == tiempo_permanencia
+                    ):
+                        return "permanencia máxima"
+
+                    return "cierre"
+
+                if not maquina.operativa:
+                    continue
+
+                self.registrar_log(
+                    evento="machine_acquired",
+                    usuario=usuario,
+                    recurso=self.identificador_maquina(maquina),
+                    detalles={
+                        "machine_type":"treadmill",
+                        "queue_wait":round(
+                            float(espera),
+                            4
+                        )
+                    }
+                )
+
+                maquina.usuario_actual = usuario.id
+
+                duracion = self.duracion_cardio(
+                    usuario.perfil
+                )
+
+                self.registrar_log(
+                    evento="cardio_start",
+                    usuario=usuario,
+                    recurso=self.identificador_maquina(maquina),
+                    detalles={
+                        "machine_type":"treadmill",
+                        "duration":round(
+                            float(duracion),
+                            4
+                        )
+                    }
+                )
+
+                #una vez iniciado no se interrumpe
+                yield self.env.timeout(duracion)
+
+                maquina.tiempo_uso += duracion
+                maquina.usuario_actual = None
+
+                fallo = yield self.env.process(
+                    self.evaluar_falla(
+                        maquina,
+                        usuario
+                    )
+                )
+
+                usuario.cardio_completado = True
+
+                self.registrar_log(
+                    evento="cardio_end",
+                    usuario=usuario,
+                    recurso=self.identificador_maquina(maquina),
+                    detalles={
+                        "machine_type":"treadmill",
+                        "duration":round(
+                            float(duracion),
+                            4
+                        ),
+                        "failed_after_use":bool(fallo)
+                    }
+                )
+
+                return "completado"
+            
+    def evaluar_falla(self,maquina,usuario):
+
+        probabilidad = PROB_FALLA[maquina.tipo]
+
+        if self.rng.random() >= probabilidad:
+            return False
+
+        maquina.operativa = False
+        maquina.inicio_falla = self.env.now
+        maquina.numero_fallas += 1
+
+        self.total_fallas += 1
+
+        cola_antes_falla = list(maquina.recurso.queue)
+
+        maquina_reasignada = self.seleccionar_maquina_reasignacion(
+            maquina
+        )
+
+        turnos_reasignacion = [
+            self.env.event()
+            for _ in cola_antes_falla
+        ]
+
+        if len(turnos_reasignacion) > 0:
+            turnos_reasignacion[0].succeed()
+
+        duracion = self.duracion_reparacion(maquina.tipo)
+
+        solicitud = {
+            "maquina":maquina,
+            "hora_falla":self.env.now,
+            "duracion":duracion
+        }
+
+        for rango,solicitud_cola in enumerate(cola_antes_falla,start=1):
+
+            usuario_cola = solicitud_cola.usuario
+
+            if maquina_reasignada is not None:
+                self.registrar_log(
+                    evento="queue_reassigned_failure",
+                    usuario=usuario_cola,
+                    recurso=self.identificador_maquina(maquina_reasignada),
+                    detalles={
+                        "from_unit":self.identificador_maquina(maquina),
+                        "queue_size":len(cola_antes_falla),
+                        "rank":rango
+                    }
+                )
+            info = {
+                "maquina":maquina_reasignada,
+                "maquina_anterior":maquina,
+                "rango":rango,
+                "turno_reasignacion":turnos_reasignacion[rango-1],
+                "siguiente_turno":(
+                    turnos_reasignacion[rango]
+                    if rango < len(turnos_reasignacion)
+                    else None
+                )
+            }
+            if not solicitud_cola.aviso_reasignacion.triggered:
+                solicitud_cola.aviso_reasignacion.succeed(info)
+
+        self.registrar_log(
+            evento="machine_failure",
+            usuario=usuario,
+            tipo_entidad="machine",
+            identificador=self.identificador_maquina(maquina),
+            ubicacion=maquina.posicion,
+            recurso=EJERCICIOS_LOG[maquina.tipo],
+            detalles={
+                "queued_users":len(cola_antes_falla),
+                "reassignment_unit":(
+                    self.identificador_maquina(maquina_reasignada)
+                    if maquina_reasignada is not None
+                    else None
+                )
+            }
+        )
+
+        yield self.cola_reparaciones.put(solicitud)
+
+        return True
+
+    def proceso_tecnico(self,tecnico):
+
+        while True:
+
+            solicitud = yield self.cola_reparaciones.get()
+
+            maquina = solicitud["maquina"]
+            hora_falla = solicitud["hora_falla"]
+            duracion = solicitud["duracion"]
+
+            tecnico.ocupado = True
+            tecnico.tarea_actual = "reparacion"
+
+            espera_despacho = self.env.now-hora_falla
+
+            origen = tecnico.posicion
+            destino = maquina.posicion
+
+            tiempo_viaje = tiempo_desplazamiento(
+                origen,
+                destino,
+                tecnico.velocidad
+            )
+
+            self.registrar_log(
+                evento="worker_travel_start",
+                tipo_entidad="worker",
+                identificador=f"M-{tecnico.id:02d}",
+                ubicacion=origen,
+                recurso="technicians",
+                detalles={
+                    "origin":origen,
+                    "destination":destino,
+                    "duration":round(float(tiempo_viaje),4)
+                }
+            )
+
+            yield self.env.timeout(tiempo_viaje)
+
+            tecnico.posicion = destino
+
+            self.registrar_log(
+                evento="worker_travel_end",
+                tipo_entidad="worker",
+                identificador=f"M-{tecnico.id:02d}",
+                ubicacion=destino,
+                recurso="technicians",
+                detalles={
+                    "origin":origen,
+                    "destination":destino,
+                    "duration":round(float(tiempo_viaje),4)
+                }
+            )
+
+            espera_reparacion = self.env.now-hora_falla
+
+            self.registrar_log(
+                evento="repair_start",
+                tipo_entidad="machine",
+                identificador=self.identificador_maquina(maquina),
+                ubicacion=maquina.posicion,
+                recurso=f"M-{tecnico.id:02d}",
+                detalles={
+                    "machine_type":EJERCICIOS_LOG[maquina.tipo],
+                    "dispatch_wait":round(float(espera_despacho),4),
+                    "travel_time":round(float(tiempo_viaje),4),
+                    "repair_wait":round(float(espera_reparacion),4),
+                    "duration":round(float(duracion),4)
+                }
+            )
+
+            yield self.env.timeout(duracion)
+
+            maquina.operativa = True
+
+            maquina.tiempo_falla += (
+                self.env.now-maquina.inicio_falla
+            )
+
+            maquina.inicio_falla = None
+
+            self.registrar_log(
+                evento="repair_end",
+                tipo_entidad="machine",
+                identificador=self.identificador_maquina(maquina),
+                ubicacion=maquina.posicion,
+                recurso=f"M-{tecnico.id:02d}",
+                detalles={
+                    "machine_type":EJERCICIOS_LOG[maquina.tipo],
+                    "repair_wait":round(float(espera_reparacion),4),
+                    "duration":round(float(duracion),4),
+                    "returned_same_day":bool(self.env.now < CIERRE)
+                }
+            )
+
+            self.notificar_reparacion()
+
+            tecnico.ocupado = False
+            tecnico.tarea_actual = None
+
+            #si no quedan fallas pendientes vuelve a recepcion
+            if len(self.cola_reparaciones.items) == 0:
+
+                origen = tecnico.posicion
+                destino = CELDA_RECEPCION
+
+                if origen != destino:
+
+                    tiempo_viaje = tiempo_desplazamiento(
+                        origen,
+                        destino,
+                        tecnico.velocidad
+                    )
+
+                    self.registrar_log(
+                        evento="worker_travel_start",
+                        tipo_entidad="worker",
+                        identificador=f"M-{tecnico.id:02d}",
+                        ubicacion=origen,
+                        recurso="technicians",
+                        detalles={
+                            "origin":origen,
+                            "destination":destino,
+                            "duration":round(float(tiempo_viaje),4)
+                        }
+                    )
+
+                    yield self.env.timeout(tiempo_viaje)
+
+                    tecnico.posicion = destino
+
+                    self.registrar_log(
+                        evento="worker_travel_end",
+                        tipo_entidad="worker",
+                        identificador=f"M-{tecnico.id:02d}",
+                        ubicacion=destino,
+                        recurso="technicians",
+                        detalles={
+                            "origin":origen,
+                            "destination":destino,
+                            "duration":round(float(tiempo_viaje),4)
+                        }
+                    )
+    
+    def duracion_reparacion(self,tipo):
+
+        if tipo == "trotadora":
+            return min(50,self.rng.gamma(7,5))
+
+        if tipo in [
+            "press_pecho",
+            "press_hombros",
+            "aperturas_pecho"
+        ]:
+            if self.rng.random() < 0.75:
+                return self.rng.gamma(12,1.35)
+            return self.rng.lognormal(3.55,0.18)
+
+        if tipo in [
+            "jalon_pecho",
+            "remo_sentado",
+            "curl_biceps"
+        ]:
+            u = self.rng.random()
+            duracion = 20.5 * (u/(1-u))**(1/4.2)
+
+            return min(48,duracion)
+
+        if tipo in [
+            "prensa_piernas",
+            "curl_femoral",
+            "extension_piernas"
+        ]:
+            if self.rng.random() < 0.65:
+                return self.rng.gamma(12,2.1)
+            return self.rng.lognormal(3.7,0.16)
+
+        if tipo == "polea":
+            if self.rng.random() < 0.70:
+                duracion = 21*self.rng.weibull(4)
+            else:
+                duracion = self.rng.lognormal(3.55,0.20)
+
+            return min(55,duracion)
+
     def intentar_ejercicio(self, usuario, ejercicio, maquina, tolerancia=None):
         #primero se revisa si el usuario tiene el tiempo suficiente 
         if self.env.now >= CIERRE:
@@ -248,13 +1141,21 @@ class Gimnasio:
             return "permanencia máxima"
         if maquina is None:
             return "sin_maquina_operativa"
-        
+
+        info_reasignacion = None
+        if (
+            usuario.reasignacion_pendiente is not None
+            and usuario.reasignacion_pendiente["maquina"] is maquina
+            ):
+            info_reasignacion = usuario.reasignacion_pendiente
         #en caso de que pueda, mover al usuario
         llego = yield self.env.process(self.mover_usuario(usuario, maquina.posicion))
+
         if not llego:
             if self.env.now >= CIERRE:
                 return "cierre"
             return "permanencia máxima"
+
         #revisar que cuado llege tenga tiempo aun
         if self.env.now >= CIERRE:
             return "cierre"
@@ -268,6 +1169,82 @@ class Gimnasio:
             tiempo_tolerancia = usuario.tolerancia
         else:
             tiempo_tolerancia = tolerancia
+
+        #si viene de una reasignacion por falla,
+#respeta el orden que tenia en la cola anterior
+        if info_reasignacion is not None:
+
+            turno = info_reasignacion["turno_reasignacion"]
+
+            if not turno.triggered:
+
+                tiempo_permanencia = usuario.hora_limite-self.env.now
+                tiempo_cierre = CIERRE-self.env.now
+
+                tiempo_disponible_turno = min(
+                    tiempo_tolerancia,
+                    tiempo_permanencia,
+                    tiempo_cierre
+                )
+
+                if tiempo_disponible_turno <= 1e-9:
+                    siguiente = info_reasignacion["siguiente_turno"]
+
+                    if (
+                        siguiente is not None
+                        and not siguiente.triggered
+                    ):
+                        siguiente.succeed()
+
+                    if tiempo_permanencia <= 0:
+                        return "permanencia máxima"
+
+                    if tiempo_cierre <= 0:
+                        return "cierre"
+
+                    return "tolerancia"
+
+                inicio_espera_turno = self.env.now
+
+                resultado_turno = yield (
+                    turno
+                    | self.env.timeout(tiempo_disponible_turno)
+                )
+
+                espera_turno = (
+                    self.env.now-inicio_espera_turno
+                )
+
+                usuario.espera_maquinas += espera_turno
+                usuario.espera_total += espera_turno
+
+                if turno not in resultado_turno:
+
+                    siguiente = info_reasignacion["siguiente_turno"]
+
+                    if (
+                        siguiente is not None
+                        and not siguiente.triggered
+                    ):
+                        siguiente.succeed()
+
+                    if (
+                        tiempo_permanencia
+                        <= tiempo_tolerancia
+                        and tiempo_permanencia <= tiempo_cierre
+                    ):
+                        return "permanencia máxima"
+
+                    if tiempo_cierre <= tiempo_tolerancia:
+                        return "cierre"
+
+                    return "tolerancia"
+
+                if tiempo_tolerancia != float("inf"):
+                    tiempo_tolerancia = max(
+                        0,
+                        tiempo_tolerancia-espera_turno
+                    )
 
         maquina_libre = maquina.recurso.count == 0 and len(maquina.recurso.queue) == 0
         if maquina_libre:
@@ -285,12 +1262,38 @@ class Gimnasio:
             return "cierre"
         inicio_espera = self.env.now
         with maquina.recurso.request() as solicitud_maquina:
+            solicitud_maquina.usuario = usuario
+            solicitud_maquina.ejercicio = ejercicio
+            solicitud_maquina.aviso_reasignacion = self.env.event()
+            if info_reasignacion is not None:
+
+                siguiente = info_reasignacion["siguiente_turno"]
+
+                if (
+                    siguiente is not None
+                    and not siguiente.triggered
+                ):
+                    siguiente.succeed()
+
+                usuario.reasignacion_pendiente = None
+                
             if not solicitud_maquina.triggered:
                 self.registrar_log(evento="machine_queue_enter", usuario=usuario, recurso=self.identificador_maquina(maquina), detalles={"machine_type": EJERCICIOS_LOG[maquina.tipo], "queue_length": len(maquina.recurso.queue)})
-            resultado = yield solicitud_maquina | self.env.timeout(tiempo_dispo)
+            resultado = yield (
+                solicitud_maquina
+                | self.env.timeout(tiempo_dispo)
+                | solicitud_maquina.aviso_reasignacion
+            )
             espera = self.env.now - inicio_espera
             usuario.espera_maquinas = usuario.espera_maquinas + espera
             usuario.espera_total = usuario.espera_total + espera
+            if solicitud_maquina.aviso_reasignacion in resultado:
+                info = resultado[solicitud_maquina.aviso_reasignacion]
+
+                usuario.reasignacion_pendiente = info
+
+                return "maquina_averiada"
+            
             if self.env.now >= CIERRE:
                 return "cierre"
             if self.env.now >= usuario.hora_limite:
@@ -327,9 +1330,24 @@ class Gimnasio:
             #registrar
             usuario.completados.append(ejercicio)
             usuario.pendientes.remove(ejercicio)
+
             maquina.tiempo_uso += duracion
             maquina.usuario_actual = None
-            self.registrar_log(evento="exercise_end", usuario=usuario, recurso=self.identificador_maquina(maquina), detalles={"machine_type": EJERCICIOS_LOG[maquina.tipo], "duration": round(float(duracion), 4)})
+
+            fallo = yield self.env.process(
+                self.evaluar_falla(maquina,usuario)
+            )
+
+            self.registrar_log(
+                evento="exercise_end",
+                usuario=usuario,
+                recurso=self.identificador_maquina(maquina),
+                detalles={
+                    "machine_type":EJERCICIOS_LOG[maquina.tipo],
+                    "duration":round(float(duracion),4),
+                    "failed_after_use":bool(fallo)
+                }
+            )
             #liberar al entrenador en caso de que se haya neesitado
             if pedido is not None:
                 pedido["fin"].succeed()
@@ -341,6 +1359,188 @@ class Gimnasio:
             self.entrenadores.append(entrenador)
             self.env.process(self.proceso_entrenador(entrenador))
 
+    def tiempo_reposicion(self,insumo):
+        if insumo == "water":
+            p = PARAMETROS_REPOSICION["water"]
+
+            if self.rng.random() < p["p_gamma"]:
+                return self.rng.gamma(
+                    p["gamma_shape"],
+                    p["gamma_scale"]
+                )
+
+            return self.rng.lognormal(
+                p["log_mu"],
+                p["log_sigma"]
+            )
+
+        p = PARAMETROS_REPOSICION["towels"]
+
+        return self.rng.gamma(
+            p["gamma_shape"],
+            p["gamma_scale"]
+        )
+    
+    def notificar_stock(self,insumo):
+
+        aviso = self.aviso_stock[insumo]
+
+        self.aviso_stock[insumo] = self.env.event()
+
+        if not aviso.triggered:
+            aviso.succeed()
+
+
+    def activar_quiebre(self,insumo,usuario=None):
+        if not self.quiebre_activo[insumo]:
+
+            self.quiebre_activo[insumo] = True
+            self.inicio_quiebre[insumo] = self.env.now
+            self.episodios_quiebre[insumo] += 1
+
+            celda = (
+                CELDA_AGUA
+                if insumo == "water"
+                else CELDA_TOALLAS
+            )
+
+            evento = (
+                "water_stockout"
+                if insumo == "water"
+                else "towels_stockout"
+            )
+
+            identificador = insumo
+
+            if usuario is not None:
+                identificador = f"U-{usuario.id:04d}"
+
+            self.registrar_log(
+                evento=evento,
+                usuario=usuario,
+                tipo_entidad="supply",
+                identificador=identificador,
+                ubicacion=celda,
+                recurso=insumo,
+                detalles={
+                    "stock":0,
+                    "episode":self.episodios_quiebre[insumo]
+                }
+            )
+
+        #al quedar en cero la reposicion pasa a urgente
+        if self.env.now < CIERRE:
+            self.solicitar_reposicion(
+                insumo,
+                PRIORIDAD_URGENTE,
+                "urgent"
+            )
+
+    def finalizar_quiebre(self,insumo):
+
+        if not self.quiebre_activo[insumo]:
+            return
+
+        duracion = (
+            self.env.now
+            - self.inicio_quiebre[insumo]
+        )
+
+        self.duracion_quiebre[insumo] += duracion
+
+        evento = (
+            "water_stockout_end"
+            if insumo == "water"
+            else "towels_stockout_end"
+        )
+
+        nivel = (
+            self.agua.level
+            if insumo == "water"
+            else self.toallas.level
+        )
+
+        self.registrar_log(
+            evento=evento,
+            tipo_entidad="supply",
+            identificador=insumo,
+            recurso=insumo,
+            detalles={
+                "episode":self.episodios_quiebre[insumo],
+                "episode_duration":round(
+                    float(duracion),
+                    4
+                ),
+                "new_stock":round(
+                    float(nivel),
+                    4
+                )
+            }
+        )
+
+        self.quiebre_activo[insumo] = False
+        self.inicio_quiebre[insumo] = None
+
+
+    def solicitar_reposicion(self,insumo,prioridad,motivo):
+
+        existente = self.solicitudes_reposicion[insumo]
+
+        #no existe ninguna solicitud
+        if existente is None:
+
+            self.contador_tareas_recepcion += 1
+
+            orden = self.contador_tareas_recepcion
+            fin = self.env.event()
+
+            solicitud = {
+                "insumo":insumo,
+                "prioridad":prioridad,
+                "motivo":motivo,
+                "estado":"pendiente",
+                "orden":orden,
+                "fin":fin
+            }
+
+            self.solicitudes_reposicion[insumo] = solicitud
+
+            tarea = (
+                prioridad,
+                orden,
+                "reposicion",
+                solicitud,
+                fin,
+                self.env.now
+            )
+
+            self.cola_recepcion.put(tarea)
+
+            return
+
+        #si ya existe una solicitud periodica pendiente
+        #y el stock llega a cero, la misma solicitud
+        #pasa a urgente
+        if (
+            prioridad == PRIORIDAD_URGENTE
+            and existente["prioridad"] != PRIORIDAD_URGENTE
+            and existente["estado"] == "pendiente"
+        ):
+
+            existente["prioridad"] = PRIORIDAD_URGENTE
+            existente["motivo"] = "urgent"
+
+            tarea_urgente = (
+                PRIORIDAD_URGENTE,
+                existente["orden"],
+                "reposicion",
+                existente,
+                existente["fin"],
+                self.env.now
+            )
+
+            self.cola_recepcion.put(tarea_urgente)
+            
     def retirar_toallas(self,usuario):
         limite = min(usuario.hora_limite,CIERRE)
         if self.env.now >= limite:
@@ -364,8 +1564,10 @@ class Gimnasio:
                 return False
             cantidad = min(MAX_TOALLAS_RETIRO,int(self.toallas.level))
             stock_anterior = self.toallas.level
-            yield self.toallas.get(cantidad)
+
             yield self.env.timeout(TIEMPO_RETIRO_TOALLAS)
+            yield self.toallas.get(cantidad)
+
             usuario.toallas += cantidad
             self.registrar_log(evento="towels_pickup_end", usuario=usuario, recurso="towels", detalles={"amount": cantidad, "pickup_duration": TIEMPO_RETIRO_TOALLAS, "stock_before": stock_anterior, "remaining_stock": self.toallas.level, "towels_personal": usuario.toallas})
         return True
@@ -408,13 +1610,95 @@ class Gimnasio:
             if self.agua.level <= 0:
                 self.registrar_log(evento="water_stockout", tipo_entidad="supply", identificador="water", ubicacion=CELDA_AGUA, recurso="water", detalles={"remaining_stock": self.agua.level})
                 return False
-            cantidad = min(usuario.capacidad_botella-usuario.agua, self.agua.level)
+            cantidad = min(
+                usuario.capacidad_botella-usuario.agua,
+                self.agua.level
+            )
+
             stock_anterior = self.agua.level
-            yield self.agua.get(cantidad)
+
             yield self.env.timeout(TIEMPO_RETIRO_AGUA)
+            yield self.agua.get(cantidad)
+
             usuario.agua += cantidad
             self.registrar_log(evento="water_pickup_end", usuario=usuario, recurso="water", detalles={"amount": round(float(cantidad), 4), "pickup_duration": TIEMPO_RETIRO_AGUA, "stock_before": round(float(stock_anterior), 4), "remaining_stock": round(float(self.agua.level), 4), "bottle_level_liters": round(float(usuario.agua), 4)})
         return True
+
+    def inspecciones_periodicas(self):
+
+        proxima_agua = INTERVALO_REVISION_AGUA
+        proxima_toallas = INTERVALO_REVISION_TOALLAS
+
+        while True:
+
+            siguiente = min(
+                proxima_agua,
+                proxima_toallas
+            )
+
+            if siguiente >= CIERRE:
+                return
+
+            yield self.env.timeout(
+                siguiente-self.env.now
+            )
+
+            revisar_agua = (
+                abs(
+                    self.env.now-proxima_agua
+                ) < 1e-9
+            )
+
+            revisar_toallas = (
+                abs(
+                    self.env.now-proxima_toallas
+                ) < 1e-9
+            )
+
+            #la revision es como una camara:
+            #solo requiere que exista al menos
+            #un recepcionista libre
+            hay_recepcionista_libre = any(
+                not r.ocupado
+                for r in self.recepcionistas
+            )
+
+            if hay_recepcionista_libre:
+
+                #IMPORTANTE:
+                #si coinciden ambas revisiones,
+                #toallas primero
+                if (
+                    revisar_toallas
+                    and self.toallas.level
+                        < UMBRAL_TOALLAS
+                ):
+                    self.solicitar_reposicion(
+                        "towels",
+                        PRIORIDAD_PERIODICA,
+                        "periodic"
+                    )
+
+                if (
+                    revisar_agua
+                    and self.agua.level
+                        < UMBRAL_AGUA
+                ):
+                    self.solicitar_reposicion(
+                        "water",
+                        PRIORIDAD_PERIODICA,
+                        "periodic"
+                    )
+
+            if revisar_agua:
+                proxima_agua += (
+                    INTERVALO_REVISION_AGUA
+                )
+
+            if revisar_toallas:
+                proxima_toallas += (
+                    INTERVALO_REVISION_TOALLAS
+                )
 
     def intentar_estandar(self, usuario, ejercicio):
         espera_inicial = usuario.espera_maquinas
@@ -432,6 +1716,40 @@ class Gimnasio:
             resultado = yield self.env.process(self.intentar_ejercicio(usuario, ejercicio, maquina, tolerancia_restante))
             if resultado == "maquina_averiada":
                 continue
+            return resultado
+
+    def intentar_express(self,usuario,ejercicio):
+        espera_inicial = usuario.espera_maquinas
+
+        while True:
+            espera_usada = usuario.espera_maquinas-espera_inicial
+
+            tolerancia_restante = max(
+                0,
+                usuario.tolerancia-espera_usada
+            )
+
+            maquina = self.seleccionar_maquina(
+                usuario,
+                ejercicio
+            )
+
+            #express no espera reparacion
+            if maquina is None:
+                return "sin_maquina_operativa"
+
+            resultado = yield self.env.process(
+                self.intentar_ejercicio(
+                    usuario,
+                    ejercicio,
+                    maquina,
+                    tolerancia_restante
+                )
+            )
+
+            if resultado == "maquina_averiada":
+                continue
+
             return resultado
 
     def rutina_fuerza(self,usuario):
@@ -483,9 +1801,28 @@ class Gimnasio:
                     usuario.omitidos.append(ejercicio)
                     self.registrar_log(evento="exercise_omitted", usuario=usuario, recurso=EJERCICIOS_LOG[ejercicio], detalles={"reason": "no_operational_machine"})
                     continue
-                resultado = yield self.env.process(self.intentar_ejercicio(usuario,ejercicio,maquina))
+                resultado = yield self.env.process(
+                        self.intentar_express(
+                            usuario,
+                            ejercicio
+                        )
+                    )
+                if resultado == "sin_maquina_operativa":
+                    usuario.pendientes.remove(ejercicio)
+                    usuario.omitidos.append(ejercicio)
 
-                if resultado == "completado":
+                    self.registrar_log(
+                        evento="exercise_omitted",
+                        usuario=usuario,
+                        recurso=EJERCICIOS_LOG[ejercicio],
+                        detalles={
+                            "reason":"no_operational_machine"
+                        }
+                    )
+
+                    continue
+
+                elif resultado == "completado":
                     yield self.env.process(self.finalizar_ejercicio(usuario,ejercicio))
 
                 elif resultado == "tolerancia":
@@ -515,6 +1852,7 @@ class Gimnasio:
                     #hay maquinas operativas pero no alcanza la tolerancia
                     for pendiente in usuario.pendientes:
                         self.registrar_log(evento="exercise_pending", usuario=usuario, recurso=EJERCICIOS_LOG[pendiente], detalles={"reason": "no_available_alternative"})
+                        usuario.cardio_permitido = False
                     return
                 puede_continuar = yield self.env.process(self.preparar_ejercicio(usuario))
                 if not puede_continuar:
@@ -545,6 +1883,13 @@ class Gimnasio:
                     return
                 maquina = self.seleccionar_maquina(usuario,ejercicio)
                 if maquina is None:
+                    resultado = yield self.env.process(
+                        self.esperar_operatividad(usuario,[ejercicio])
+                    )
+
+                    if resultado == "disponible":
+                        continue
+
                     return
                 resultado = yield self.env.process(
                     self.intentar_ejercicio(usuario, ejercicio, maquina, float("inf")))
@@ -601,7 +1946,7 @@ class Gimnasio:
             self.registrar_log(evento="trainer_assistance_end", usuario=usuario, tipo_entidad="worker", identificador=f"PT-{entrenador.id:02d}", ubicacion=entrenador.posicion, recurso=self.identificador_maquina(maquina))
             entrenador.ocupado = False
             entrenador.tarea_actual = None
-           
+
     def solicitar_entrenador(self, usuario, maquina):
         limite = min(usuario.hora_limite, CIERRE)
         tiempo_disponible = limite - self.env.now
@@ -660,8 +2005,13 @@ class Gimnasio:
         return None,None
 
     def iniciar(self):
+
+        self.env.process(
+            self.inspecciones_periodicas())
+
         for perfil in ["E","X","F","I"]:
-            self.env.process(self.llegadas(perfil))
+            self.env.process(
+                self.llegadas(perfil))
 
     def llegadas(self,perfil):
         while self.env.now < FIN_ADMISION:
@@ -716,6 +2066,10 @@ class Gimnasio:
 
         self.registrar_log(evento="strength_end", usuario=usuario, detalles={"completed": [EJERCICIOS_LOG[e] for e in usuario.completados],"pending": [EJERCICIOS_LOG[e] for e in usuario.pendientes], "omitted": [EJERCICIOS_LOG[e] for e in usuario.omitidos]})
 
+        if (usuario.cardio_planificado and usuario.cardio_permitido and self.env.now < CIERRE and self.env.now < usuario.hora_limite):
+            
+            yield self.env.process(self.intentar_cardio(usuario) )
+
         yield self.env.process(self.salir_usuario(usuario))
 
 
@@ -748,6 +2102,190 @@ class Gimnasio:
         self.registrar_log(evento="user_travel_interrupted", usuario=usuario, detalles={"origin": origen, "destination": destino, "elapsed_time": round(float(tiempo_disponible), 4), "planned_duration": round(float(tiempo), 4), "fraction": round(float(fraccion), 4), "reason": motivo})
         return False
 
+
+    def mover_recepcionista(self, recepcionista, destino):
+
+        origen = recepcionista.posicion
+
+        tiempo = tiempo_desplazamiento(
+            origen,
+            destino,
+            recepcionista.velocidad
+        )
+
+        self.registrar_log(
+            evento="worker_travel_start",
+            tipo_entidad="worker",
+            identificador=f"R-{recepcionista.id:02d}",
+            ubicacion=origen,
+            recurso="receptionists",
+            detalles={
+                "origin":origen,
+                "destination":destino,
+                "distance_m":round(
+                    float(distancia(origen,destino)),
+                    4
+                ),
+                "duration":round(
+                    float(tiempo),
+                    4
+                ),
+                "speed_m_per_min":round(
+                    float(recepcionista.velocidad),
+                    4
+                )
+            }
+        )
+
+        yield self.env.timeout(tiempo)
+
+        recepcionista.posicion = destino
+
+        self.registrar_log(
+            evento="worker_travel_end",
+            tipo_entidad="worker",
+            identificador=f"R-{recepcionista.id:02d}",
+            ubicacion=destino,
+            recurso="receptionists",
+            detalles={
+                "origin":origen,
+                "destination":destino,
+                "duration":round(
+                    float(tiempo),
+                    4
+                ),
+                "speed_m_per_min":round(
+                    float(recepcionista.velocidad),
+                    4
+                )
+            }
+        )
+    def ejecutar_reposicion(self,recepcionista, solicitud):
+
+        insumo = solicitud["insumo"]
+
+        solicitud["estado"] = "ejecucion"
+
+        if insumo == "water":
+            destino = CELDA_AGUA
+            punto = self.punto_agua
+            contenedor = self.agua
+            capacidad = CAPACIDAD_AGUA
+            evento_inicio = "water_replenishment_start"
+            evento_fin = "water_replenishment_end"
+
+        else:
+            destino = CELDA_TOALLAS
+            punto = self.punto_toallas
+            contenedor = self.toallas
+            capacidad = CAPACIDAD_TOALLAS
+            evento_inicio = "towels_replenishment_start"
+            evento_fin = "towels_replenishment_end"
+
+        #viaje desde recepcion
+        yield self.env.process(
+            self.mover_recepcionista(
+                recepcionista,
+                destino
+            )
+        )
+
+        #el punto SOLO se bloquea durante
+        #el servicio efectivo de reposicion
+        with punto.request() as req:
+
+            yield req
+
+            duracion = self.tiempo_reposicion(
+                insumo
+            )
+
+            nivel_anterior = contenedor.level
+
+            self.registrar_log(
+                evento=evento_inicio,
+                tipo_entidad="worker",
+                identificador=f"R-{recepcionista.id:02d}",
+                ubicacion=destino,
+                recurso=insumo,
+                detalles={
+                    "duration":round(
+                        float(duracion),
+                        4
+                    ),
+                    "reason":solicitud["motivo"]
+                }
+            )
+
+            yield self.env.timeout(duracion)
+
+            cantidad = (
+                capacidad-contenedor.level
+            )
+
+            if cantidad > 0:
+                yield contenedor.put(cantidad)
+
+            self.cantidad_repuesta[
+                insumo
+            ] += cantidad
+
+            #si habia quiebre termina justo
+            #cuando vuelve el stock
+            self.finalizar_quiebre(insumo)
+
+            #despertar usuarios esperando
+            self.notificar_stock(insumo)
+
+        #el punto ya quedo libre,
+        #pero el recepcionista sigue ocupado
+        #hasta volver a recepcion
+        yield self.env.process(
+            self.mover_recepcionista(
+                recepcionista,
+                CELDA_RECEPCION
+            )
+        )
+
+        self.registrar_log(
+            evento=evento_fin,
+            tipo_entidad="worker",
+            identificador=f"R-{recepcionista.id:02d}",
+            ubicacion=CELDA_RECEPCION,
+            recurso=insumo,
+            detalles={
+                "duration":round(
+                    float(duracion),
+                    4
+                ),
+                "old_level":round(
+                    float(nivel_anterior),
+                    4
+                ),
+                "new_level":round(
+                    float(contenedor.level),
+                    4
+                ),
+                "reason":solicitud["motivo"]
+            }
+        )
+
+        self.solicitudes_reposicion[
+            insumo
+        ] = None
+
+        self.tareas_reposicion[
+            insumo
+        ] = None
+
+        #caso extremo: durante el regreso
+        #se volvio a agotar
+        if (
+            contenedor.level <= 0
+            and self.env.now < CIERRE
+        ):
+            self.activar_quiebre(insumo)
+
     def salir_usuario(self, usuario):
         for destino in [CELDA_INICIO_ENTRENAMIENTO, CELDA_PASO, CELDA_ACCESO]:
             yield self.env.process(self.mover_usuario(usuario, destino, respetar_limite=False))
@@ -756,9 +2294,9 @@ class Gimnasio:
         usuario.hora_salida = self.env.now
         self.registrar_log(evento="exit", usuario=usuario,
             detalles={"occupancy": self.usuarios_dentro, "wait_operational": round(usuario.espera_operacional, 4), "stay": round(self.env.now - usuario.hora_llegada, 4), "planned": len(usuario.rutina),
-                "completed": len(usuario.completados), "omitted": len(usuario.omitidos), "total_wait": round(usuario.espera_total, 4),
-                "wait_machine": round(usuario.espera_maquinas, 4), "wait_reception": round(usuario.espera_recepcion, 4), "wait_assistance": round(usuario.espera_entrenador, 4),
-                "towel_wait": round(usuario.espera_toallas, 4), "water_wait": round(usuario.espera_agua, 4)})
+                "completed": len(usuario.completados), "omitted": len(usuario.omitidos), "cardio_completed":bool(usuario.cardio_completado),"total_wait": round(usuario.espera_total, 4),
+                "wait_machine": round(usuario.espera_maquinas, 4),"wait_cardio":round(usuario.espera_cardio,4), "wait_reception": round(usuario.espera_recepcion, 4), "wait_assistance": round(usuario.espera_entrenador, 4),
+                "towel_wait": round(usuario.espera_toallas, 4), "water_wait": round(usuario.espera_agua, 4)},)
 
     def registrar_usuario(self,usuario):
         self.contador_tareas_recepcion += 1
@@ -767,26 +2305,84 @@ class Gimnasio:
         yield self.cola_recepcion.put(tarea)
         yield fin
 
-
     def proceso_recepcionista(self,recepcionista):
+
         while True:
-            prioridad,orden,tipo,usuario,fin,inicio_espera = yield self.cola_recepcion.get()
+
+            (
+                prioridad,
+                orden,
+                tipo,
+                entidad,
+                fin,
+                inicio_espera
+            ) = yield self.cola_recepcion.get()
+
             recepcionista.ocupado = True
             recepcionista.tarea_actual = tipo
+
             if tipo == "registro":
-                espera = self.env.now-inicio_espera
+
+                usuario = entidad
+
+                espera = (
+                    self.env.now-inicio_espera
+                )
+
                 usuario.espera_recepcion += espera
                 usuario.espera_total += espera
-                self.registrar_log(evento="registration_start", usuario=usuario, recurso=f"R-{recepcionista.id:02d}", detalles={"queue_wait": round(float(espera), 4)})
-                duracion = self.tiempo_registro(usuario.perfil)
+
+                self.registrar_log(
+                    evento="registration_start",
+                    usuario=usuario,
+                    recurso=f"R-{recepcionista.id:02d}",
+                    detalles={
+                        "queue_wait":round(
+                            float(espera),
+                            4
+                        )
+                    }
+                )
+
+                duracion = self.tiempo_registro(
+                    usuario.perfil
+                )
+
                 yield self.env.timeout(duracion)
+
                 usuario.toallas = TOALLAS_INICIALES
+
                 self.generar_asistencias(usuario)
-                self.registrar_log(evento="registration_end", usuario=usuario, recurso=f"R-{recepcionista.id:02d}", detalles={"duration": round(float(duracion), 4), "towels": usuario.toallas})
+
+                self.registrar_log(
+                    evento="registration_end",
+                    usuario=usuario,
+                    recurso=f"R-{recepcionista.id:02d}",
+                    detalles={
+                        "duration":round(
+                            float(duracion),
+                            4
+                        ),
+                        "towels":usuario.toallas
+                    }
+                )
+
+            elif tipo == "reposicion":
+
+                solicitud = entidad
+
+                yield self.env.process(
+                    self.ejecutar_reposicion(
+                        recepcionista,
+                        solicitud
+                    )
+                )
+
             recepcionista.ocupado = False
             recepcionista.tarea_actual = None
-            fin.succeed()
 
+            if not fin.triggered:
+                fin.succeed()
     def configurar_usuario(self,usuario):
         parametros = PARAMETROS_PERFIL[usuario.perfil]
 
@@ -919,13 +2515,17 @@ class Gimnasio:
 
 
 env = simpy.Environment()
-gimnasio = Gimnasio(env,seed=0)
+gimnasio = Gimnasio(env,seed=2)
 
 gimnasio.iniciar()
-env.run(until=120)
+env.run(until=180)
 
 gimnasio.registrar_cambio_ocupacion()
-gimnasio.guardar_log("log_prueba_120min.csv", generar_log=True)
+#gimnasio.guardar_log("log_prueba_reasignacion.csv",generar_log=True)
+#gimnasio.guardar_log("log_prueba_reasignacion_seeds.csv",generar_log=True)
+#gimnasio.guardar_log("log_prueba_fallas.csv", generar_log=True)
+#gimnasio.guardar_log("log_prueba_120min.csv", generar_log=True)
+gimnasio.guardar_log("log_prueba_cardio.csv",generar_log=True)
 
 print("Ocupacion promedio:", gimnasio.area_ocupacion / env.now)
 print("Proporcion a capacidad:", gimnasio.tiempo_capacidad / env.now)
@@ -949,3 +2549,4 @@ for evento in gimnasio.eventos_log:
 
 print("Desplazamientos de usuarios interrumpidos:", interrupciones_usuarios)
 print("Desplazamientos de entrenadores interrumpidos:", interrupciones_entrenadores)
+print("Fallas de maquinas:",gimnasio.total_fallas)
