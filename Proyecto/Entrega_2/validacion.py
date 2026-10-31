@@ -4,8 +4,8 @@ import matplotlib.pyplot as plt
 import scipy.stats as st
 from scipy.stats import mannwhitneyu
 
-alpha = 0.05
 replicas = 300
+alpha = 0.05
 
 #cargar datos
 datos_reales = pd.read_csv("validar_gimnasio.csv", sep=";", decimal=",")
@@ -107,7 +107,7 @@ def graficar_histograma(datos_reales, datos_simulados, bins, titulo, eje_x):
     plt.title(f"{titulo}")
     plt.legend()
     plt.show()
-
+"""
 graficar_histograma(llegadas_reales, llegadas_simuladas, bins_llegadas, "Distribución del número de llegadas", "Número de llegadas")
 graficar_histograma(tasa_rechazo_real, tasa_rechazo_simulada, bins_tasa_rechazo, "Distribución de la tasa de rechazo","Tasa de rechazo")
 graficar_histograma(ocupacion_promedio_real, ocupacion_promedio_simulada, bins_ocupacion_promedio, "Distribución de la ocupación promedio", "Número promedio de usuarios")
@@ -128,8 +128,8 @@ graficar_histograma(duracion_quiebres_toallas_real, duracion_quiebres_toallas_si
 graficar_histograma(numero_fallas_maquinas_real,numero_fallas_maquinas_simulada,bins_numero_fallas_maquinas,"Distribución del número de fallas de máquinas", "Número de fallas")
 graficar_histograma(espera_promedio_reparacion_real, espera_promedio_reparacion_simulada, bins_espera_promedio_rep, "Distribución de la espera promedio por reparación", "Tiempo de espera (minutos)")
 graficar_histograma(minutos_operacion_post_cierre_real, minutos_operacion_post_cierre_simulada, bins_minutos_operacion_post_cierre, "Distribución de la operación posterior al cierre", "Duración (minutos)")
-
-
+"""
+print("------ TEST MANN WHITNEY -------")
 def test_mann_whitney(datos_reales, datos_simulados, medida_desempeno):
     U, p_value = mannwhitneyu(datos_reales, datos_simulados, method = "asymptotic")
     print(f"\nMedida de desempeño: {medida_desempeno}")
@@ -161,3 +161,82 @@ test_mann_whitney(duracion_quiebres_toallas_real,duracion_quiebres_toallas_simul
 test_mann_whitney(numero_fallas_maquinas_real,numero_fallas_maquinas_simulada, "Número de fallas de máquinas")
 test_mann_whitney(espera_promedio_reparacion_real, espera_promedio_reparacion_simulada,"Espera promedio por reparación")
 test_mann_whitney(minutos_operacion_post_cierre_real, minutos_operacion_post_cierre_simulada, "Operación posterior al cierre")
+
+print("\n ------ INTERVALO T-PAREADO -------")
+def intervalo_t_pareado(datos_reales, datos_simulados, medida_desempeno):
+    n = len(datos_reales)
+    if n != len(datos_simulados):
+        print("Error los datos tienes que ser del mismo largo")            
+        return False
+    print(f"\nMedida de desempeño: {medida_desempeno}")
+    Z= datos_reales - datos_simulados
+    media = np.average(Z)
+    varianza = np.var(Z,ddof=1) #ddof=1 ya que de esta frrma se calcula la avrainza muestral
+    largo = st.t.ppf(1 - alpha / 2,df=n -1)*np.sqrt(varianza/n)
+    ic = [float(media - largo), float(media + largo)]
+    print("Intervalo de confianza: ", ic)
+    if ic[0] <= 0 <= ic[1]:
+        print("El intervalo CONTIENE al 0, por lo que, NO hay evidencia para rechazar H0")
+    else:
+        print("El intervalo NO CONTIENE al 0, por lo que, HAY EVIDENCIA PARA RECHAZAR H0")
+    
+intervalo_t_pareado(llegadas_reales,llegadas_simuladas, "Número de llegadas")
+intervalo_t_pareado(tasa_rechazo_real, tasa_rechazo_simulada, "Tasa de rechazo")
+intervalo_t_pareado(ocupacion_promedio_real, ocupacion_promedio_simulada, "Ocupación promedio")
+intervalo_t_pareado(prop_cap_maxima_real,prop_cap_maxima_simulada, "Proporción a capacidad máxima")
+intervalo_t_pareado(espera_total_promedio_real,espera_total_promedio_simulada,"Espera total promedio")
+intervalo_t_pareado(perc_90_espera_total_real,perc_90_espera_total_simulada,"Percentil 90 de espera total")
+intervalo_t_pareado(espera_total_promedio_19_21_real,espera_total_promedio_19_21_simulada,"Espera promedio entre 19:00 y 21:00")
+intervalo_t_pareado(tasa_finalizacion_rutinas_real,tasa_finalizacion_rutinas_simulada,"Tasa de finalización de rutinas")
+intervalo_t_pareado(tasa_finalizacion_rutinas_express_real,tasa_finalizacion_rutinas_express_simulada,"Tasa de finalización de rutinas express")
+intervalo_t_pareado(insatisfaccion_promedio_real,insatisfaccion_promedio_simulada,"Insatisfacción promedio")
+intervalo_t_pareado(utilizacion_operacional_trotadoras_real,utilizacion_operacional_trotadoras_simulada,"Utilización operacional de trotadoras")
+intervalo_t_pareado(utilizacion_operacional_aperturas_pecho_real,utilizacion_operacional_aperturas_pecho_simulada,"Utilización operacional de aperturas de pecho")
+intervalo_t_pareado(cola_promedio_aperturas_pecho_real,cola_promedio_aperturas_pecho_simulada,"Cola promedio de aperturas de pecho")
+intervalo_t_pareado(cola_promedio_remo_sentado_real,cola_promedio_remo_sentado_simulada,"Cola promedio de remo sentado")
+intervalo_t_pareado(utilizacion_entrenadores_real,utilizacion_entrenadores_simulada,"Utilización de entrenadores")
+intervalo_t_pareado(duracion_quiebres_agua_real,duracion_quiebres_agua_simulada,"Duración de quiebres de agua")
+intervalo_t_pareado(duracion_quiebres_toallas_real,duracion_quiebres_toallas_simulada,"Duración de quiebres de toallas")
+intervalo_t_pareado(numero_fallas_maquinas_real,numero_fallas_maquinas_simulada, "Número de fallas de máquinas")
+intervalo_t_pareado(espera_promedio_reparacion_real, espera_promedio_reparacion_simulada,"Espera promedio por reparación")
+intervalo_t_pareado(minutos_operacion_post_cierre_real, minutos_operacion_post_cierre_simulada, "Operación posterior al cierre")
+
+print("\n ------ INTERVALO WELCH -------")
+def intervalo_welch(datos_reales, datos_simulados, medida_desempeno):
+    print(f"\nMedida de desempeño: {medida_desempeno}")
+    n = len(datos_reales)
+    m = len(datos_simulados)
+    mediaX = np.average(datos_reales)
+    mediaY = np.average(datos_simulados)
+    varianzaX = np.var(datos_reales,ddof=1)
+    varianzaY = np.var(datos_simulados, ddof=1)
+    f = np.power(varianzaX/n + varianzaY/m, 2)/( np.power(varianzaX/n,2)/(n-1) +  np.power(varianzaY/m,2)/(m-1) )
+    largo = st.t.ppf(1 - alpha / 2,df=f)*np.sqrt(varianzaX/n + varianzaY/m)
+    #largo = st.norm.ppf(1 - alpha / 2)*np.sqrt(varianzaX/n + varianzaY/m) # con Normal(0,1)
+    ic = [float(mediaX - mediaY - largo), float(mediaX - mediaY + largo)]
+    print("Intervalo de confianza: ", ic)
+    if ic[0] <= 0 <= ic[1]:
+        print("El intervalo CONTIENE al 0, por lo que, NO hay evidencia para rechazar H0")
+    else:
+        print("El intervalo NO CONTIENE al 0, por lo que, HAY EVIDENCIA PARA RECHAZAR H0")
+
+intervalo_welch(llegadas_reales,llegadas_simuladas, "Número de llegadas")
+intervalo_welch(tasa_rechazo_real, tasa_rechazo_simulada, "Tasa de rechazo")
+intervalo_welch(ocupacion_promedio_real, ocupacion_promedio_simulada, "Ocupación promedio")
+intervalo_welch(prop_cap_maxima_real,prop_cap_maxima_simulada, "Proporción a capacidad máxima")
+intervalo_welch(espera_total_promedio_real,espera_total_promedio_simulada,"Espera total promedio")
+intervalo_welch(perc_90_espera_total_real,perc_90_espera_total_simulada,"Percentil 90 de espera total")
+intervalo_welch(espera_total_promedio_19_21_real,espera_total_promedio_19_21_simulada,"Espera promedio entre 19:00 y 21:00")
+intervalo_welch(tasa_finalizacion_rutinas_real,tasa_finalizacion_rutinas_simulada,"Tasa de finalización de rutinas")
+intervalo_welch(tasa_finalizacion_rutinas_express_real,tasa_finalizacion_rutinas_express_simulada,"Tasa de finalización de rutinas express")
+intervalo_welch(insatisfaccion_promedio_real,insatisfaccion_promedio_simulada,"Insatisfacción promedio")
+intervalo_welch(utilizacion_operacional_trotadoras_real,utilizacion_operacional_trotadoras_simulada,"Utilización operacional de trotadoras")
+intervalo_welch(utilizacion_operacional_aperturas_pecho_real,utilizacion_operacional_aperturas_pecho_simulada,"Utilización operacional de aperturas de pecho")
+intervalo_welch(cola_promedio_aperturas_pecho_real,cola_promedio_aperturas_pecho_simulada,"Cola promedio de aperturas de pecho")
+intervalo_welch(cola_promedio_remo_sentado_real,cola_promedio_remo_sentado_simulada,"Cola promedio de remo sentado")
+intervalo_welch(utilizacion_entrenadores_real,utilizacion_entrenadores_simulada,"Utilización de entrenadores")
+intervalo_welch(duracion_quiebres_agua_real,duracion_quiebres_agua_simulada,"Duración de quiebres de agua")
+intervalo_welch(duracion_quiebres_toallas_real,duracion_quiebres_toallas_simulada,"Duración de quiebres de toallas")
+intervalo_welch(numero_fallas_maquinas_real,numero_fallas_maquinas_simulada, "Número de fallas de máquinas")
+intervalo_welch(espera_promedio_reparacion_real, espera_promedio_reparacion_simulada,"Espera promedio por reparación")
+intervalo_welch(minutos_operacion_post_cierre_real, minutos_operacion_post_cierre_simulada, "Operación posterior al cierre")
