@@ -106,7 +106,7 @@ def graficar_histograma(datos_reales, datos_simulados, bins, titulo, eje_x):
     plt.title(f"{titulo}")
     plt.legend()
     plt.show()
-"""
+
 graficar_histograma(llegadas_reales, llegadas_simuladas, bins_llegadas, "Distribución del número de llegadas", "Número de llegadas")
 graficar_histograma(tasa_rechazo_real, tasa_rechazo_simulada, bins_tasa_rechazo, "Distribución de la tasa de rechazo","Tasa de rechazo")
 graficar_histograma(ocupacion_promedio_real, ocupacion_promedio_simulada, bins_ocupacion_promedio, "Distribución de la ocupación promedio", "Número promedio de usuarios")
@@ -127,7 +127,7 @@ graficar_histograma(duracion_quiebres_toallas_real, duracion_quiebres_toallas_si
 graficar_histograma(numero_fallas_maquinas_real,numero_fallas_maquinas_simulada,bins_numero_fallas_maquinas,"Distribución del número de fallas de máquinas", "Número de fallas")
 graficar_histograma(espera_promedio_reparacion_real, espera_promedio_reparacion_simulada, bins_espera_promedio_rep, "Distribución de la espera promedio por reparación", "Tiempo de espera (minutos)")
 graficar_histograma(minutos_operacion_post_cierre_real, minutos_operacion_post_cierre_simulada, bins_minutos_operacion_post_cierre, "Distribución de la operación posterior al cierre", "Duración (minutos)")
-"""
+
 print("------ TEST MANN WHITNEY -------")
 def test_mann_whitney(datos_reales, datos_simulados, medida_desempeno):
     U, p_value = mannwhitneyu(datos_reales, datos_simulados, method = "asymptotic")
