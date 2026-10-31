@@ -4,7 +4,6 @@ import matplotlib.pyplot as plt
 import scipy.stats as st
 from scipy.stats import mannwhitneyu
 
-replicas = 300
 alpha = 0.05
 
 #cargar datos
