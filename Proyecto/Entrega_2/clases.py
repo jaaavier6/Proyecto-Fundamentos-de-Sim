@@ -39,6 +39,7 @@ class Usuario:
         self.cardio_permitido = True
         self.registro_iniciado = False
         self.registro_cancelado = False
+        self.insatisfaccion = None
 
 class Maquina:
     def __init__(self,env,tipo,id_maquina,posicion):
@@ -53,12 +54,19 @@ class Maquina:
         self.tiempo_falla = 0
         self.inicio_falla = None
         self.numero_fallas = 0
+        self.inicio_ocupacion = None
+        self.tiempo_ocupacion_jornada = 0
+        self.tiempo_efectivo_jornada = 0
+        self.tiempo_cola_jornada = 0
+
 class Recepcionista:
     def __init__(self,id_recepcionista,velocidad,posicion):
         self.id = id_recepcionista
         self.velocidad = velocidad
         self.posicion = posicion
         self.ocupado = False
+        self.inicio_ocupacion = None
+        self.tiempo_ocupado_jornada = 0
         self.tarea_actual = None
         self.dentro = True
         self.hora_salida = None
@@ -69,6 +77,8 @@ class Entrenador:
         self.velocidad = velocidad
         self.posicion = posicion
         self.ocupado = False
+        self.inicio_ocupacion = None
+        self.tiempo_ocupado_jornada = 0
         self.tarea_actual = None
         self.dentro = True
         self.hora_salida = None
@@ -79,6 +89,8 @@ class Tecnico:
         self.velocidad = velocidad
         self.posicion = posicion
         self.ocupado = False
+        self.inicio_ocupacion = None
+        self.tiempo_ocupado_jornada = 0
         self.tarea_actual = None       
         self.dentro = True
         self.hora_salida = None

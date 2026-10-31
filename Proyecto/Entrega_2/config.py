@@ -53,6 +53,8 @@ CELDA_ENTRENADORES = 25
 CELDA_TOALLAS = 44
 CELDA_AGUA = 48
 
+NOMBRES_PERFIL = {"E": "estandar", "X": "express", "F": "flexible", "I": "intenso"}
+
 TASAS_LLEGADA = {
     "E": [(0,180,5.80),(180,360,7.48),(360,540,6.61),(540,720,9.98),(720,840,11.60)],
     "X": [(0,180,2.50),(180,360,3.31),(360,540,3.31),(540,720,4.99),(720,840,5.80)],
@@ -139,106 +141,74 @@ TIEMPO_RETIRO_AGUA = 0.75
 TIEMPO_RETIRO_TOALLAS = 0.75
 
 CATEGORIA_EJERCICIO = {
-    "press_pecho":"empuje",
-    "press_hombros":"empuje",
-    "aperturas_pecho":"empuje",
-    "jalon_pecho":"jalon",
-    "remo_sentado":"jalon",
-    "curl_biceps":"jalon",
-    "prensa_piernas":"piernas",
-    "curl_femoral":"piernas",
-    "extension_piernas":"piernas",
-    "polea":"multifuncional"
-}
+    "press_pecho":"empuje","press_hombros":"empuje","aperturas_pecho":"empuje","jalon_pecho":"jalon",
+    "remo_sentado":"jalon", "curl_biceps":"jalon","prensa_piernas":"piernas",
+    "curl_femoral":"piernas", "extension_piernas":"piernas", "polea":"multifuncional"}
 
 CONSUMO_AGUA = {
-    "E": {
-        "empuje":(9,0.03),
-        "jalon":(9,0.03),
-        "piernas":(9,0.04),
-        "multifuncional":(9,0.03)
-    },
-    "X": {
-        "empuje":(9,0.03),
-        "jalon":(9,0.03),
-        "piernas":(9,0.04),
-        "multifuncional":(9,0.03)
-    },
-    "F": {
-        "empuje":(9,0.03),
-        "jalon":(9,0.03),
-        "piernas":(9,0.04),
-        "multifuncional":(9,0.03)
-    },
-    "I": {
-        "empuje":(9,0.045),
-        "jalon":(9,0.045),
-        "piernas":(9,0.06),
-        "multifuncional":(9,0.045)
-    }
-}
+    "E": {"empuje":(9,0.03), "jalon":(9,0.03), "piernas":(9,0.04), "multifuncional":(9,0.03)},
+    "X": {"empuje":(9,0.03), "jalon":(9,0.03), "piernas":(9,0.04), "multifuncional":(9,0.03)},
+    "F": {"empuje":(9,0.03), "jalon":(9,0.03), "piernas":(9,0.04),"multifuncional":(9,0.03)},
+    "I": {"empuje":(9,0.045), "jalon":(9,0.045), "piernas":(9,0.06), "multifuncional":(9,0.045)}}
 
 PROB_FALLA = {
-    "trotadora":0.005,
-    "press_pecho":0.004,
-    "press_hombros":0.004,
-    "aperturas_pecho":0.004,
-    "jalon_pecho":0.004,
-    "remo_sentado":0.004,
-    "curl_biceps":0.004,
-    "prensa_piernas":0.005,
-    "curl_femoral":0.005,
-    "extension_piernas":0.005,
-    "polea":0.006
-}
+    "trotadora":0.005,"press_pecho":0.004,
+    "press_hombros":0.004, "aperturas_pecho":0.004, "jalon_pecho":0.004,
+    "remo_sentado":0.004, "curl_biceps":0.004,"prensa_piernas":0.005,
+    "curl_femoral":0.005, "extension_piernas":0.005, "polea":0.006}
 
 
 PARAMETROS_DURACION_CARDIO = {
-    "E":{
-        "modelo":"gamma_acotada",
-        "shape":9,
-        "scale":2.0,
-        "maximo":28
-    },
+    "E":{"modelo":"gamma_acotada", "shape":9, "scale":2.0, "maximo":28},
+    "X":{"modelo":"beta_escalada", "a":3, "b":3, "minimo":6, "maximo":12},
+    "F":{"modelo":"mezcla","p_gamma":0.75, "gamma_shape":12, "gamma_scale":1.2, "log_mu":3.0, "log_sigma":0.18},
+    "I":{"modelo":"mezcla", "p_gamma":0.70, "gamma_shape":10, "gamma_scale":2.3, "log_mu":3.55, "log_sigma":0.20}}
 
-    "X":{
-        "modelo":"beta_escalada",
-        "a":3,
-        "b":3,
-        "minimo":6,
-        "maximo":12
-    },
+PARAMETROS_REPOSICION = {"water":{"p_gamma":0.75, "gamma_shape":16, "gamma_scale":0.35, "log_mu":2.45, "log_sigma":0.30},
+    "towels":{"gamma_shape":16, "gamma_scale":0.25}}
 
-    "F":{
-        "modelo":"mezcla",
-        "p_gamma":0.75,
-        "gamma_shape":12,
-        "gamma_scale":1.2,
-        "log_mu":3.0,
-        "log_sigma":0.18
-    },
+PESOS_INSATISFACCION = {
+    "E": (0.45, 0.35, 0.10, 0.10),
+    "X": (0.30, 0.55, 0.05, 0.10),
+    "F": (0.35, 0.40, 0.10, 0.15),
+    "I": (0.60, 0.20, 0.05, 0.15)}
 
-    "I":{
-        "modelo":"mezcla",
-        "p_gamma":0.70,
-        "gamma_shape":10,
-        "gamma_scale":2.3,
-        "log_mu":3.55,
-        "log_sigma":0.20
-    }
+FRANJAS = [("07_10", 0, 180), ("10_13", 180, 360), ("13_16", 360, 540), ("16_19", 540, 720), ("19_21", 720, 840)]
+
+TIPOS_MAQUINAS = {"trotadora": "utilizacion_operacional_trotadoras",
+            "aperturas_pecho": "utilizacion_operacional_aperturas_pecho",
+            "remo_sentado": "utilizacion_operacional_remo_sentado",
+            "prensa_piernas": "utilizacion_operacional_prensa_piernas",
+            "polea": "utilizacion_operacional_poleas"}
+
+
+# COSTOS DE PERSONAL
+HORAS_ORDINARIAS = 15
+
+COSTOS_PERSONAL = {"recepcionista": {"ordinario": 4500, "extra": 6750},
+    "entrenador": {"ordinario": 8000, "extra": 12000},
+    "tecnico": {"ordinario": 10000, "extra": 15000}}
+
+# COSTOS DE INSUMOS
+COSTO_LITRO_AGUA = 15
+COSTO_TOALLA = 35
+
+# COSTOS DE MAQUINAS
+COSTOS_MAQUINAS = {
+    "trotadora": {"uso": 18, "reparacion": 35000, "indisponibilidad": 120},
+    "press_pecho": {"uso": 4, "reparacion": 10000, "indisponibilidad": 45},
+    "press_hombros": {"uso": 4, "reparacion": 10000, "indisponibilidad": 45},
+    "aperturas_pecho": {"uso": 3, "reparacion": 8000, "indisponibilidad": 35},
+    "jalon_pecho": {"uso": 5, "reparacion": 12000, "indisponibilidad": 55},
+    "remo_sentado": {"uso": 5, "reparacion": 12000, "indisponibilidad": 55},
+    "curl_biceps": {"uso": 3, "reparacion": 6000, "indisponibilidad": 30},
+    "prensa_piernas": {"uso": 6, "reparacion": 20000, "indisponibilidad": 80},
+    "curl_femoral": {"uso": 4, "reparacion": 10000, "indisponibilidad": 45},
+    "extension_piernas": {"uso": 4, "reparacion": 10000, "indisponibilidad": 45},
+    "polea": {"uso": 6, "reparacion": 18000, "indisponibilidad": 75}
 }
 
-PARAMETROS_REPOSICION = {
-    "water":{
-        "p_gamma":0.75,
-        "gamma_shape":16,
-        "gamma_scale":0.35,
-        "log_mu":2.45,
-        "log_sigma":0.30
-    },
+# COSTOS DE RECHAZO Y EXPERIENCIA
+COSTOS_RECHAZO = {"E": 3000, "X": 2000, "F": 3000, "I": 5000}
 
-    "towels":{
-        "gamma_shape":16,
-        "gamma_scale":0.25
-    }
-}
+COSTOS_INSATISFACCION = {"E": 2500, "X": 1500, "F": 2500, "I": 4000}
