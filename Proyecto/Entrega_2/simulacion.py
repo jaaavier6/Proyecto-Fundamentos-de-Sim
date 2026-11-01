@@ -2022,7 +2022,7 @@ class Gimnasio:
 
 
 cant_replicas = 300
-with open("indicadores_300_replicas.csv", "w", newline="", encoding="utf-8-sig") as archivo:
+with open("metricas_300_replicas.csv", "w", newline="", encoding="utf-8-sig") as archivo:
     escritor = csv.writer(archivo, delimiter=";")
     columnas = []
     for numero_replica in range(1, cant_replicas + 1):
@@ -2064,29 +2064,27 @@ with open("indicadores_300_replicas.csv", "w", newline="", encoding="utf-8-sig")
 
 print("\nSIMULACION FINALIZADA")
 print("Total de replicas:", cant_replicas)
-print("Indicadores por replica:", len(columnas) - 1)
-print("Archivo generado: indicadores_300_replicas.csv")
-
-
+print("Metricas por replica:", len(columnas) - 1)
+print("Archivo generado: metricas_300_replicas.csv")
 
 gimnasio.iniciar()
 env.run(until=gimnasio.fin_replica)
 
 gimnasio.registrar_cambio_ocupacion()
 
-indicadores = gimnasio.indicadores_usuarios()
-indicadores_recursos = gimnasio.indicadores_recursos()
-indicadores_operacionales = gimnasio.indicadores_operacionales()
+metricas = gimnasio.indicadores_usuarios()
+metricas_recursos = gimnasio.indicadores_recursos()
+metricas_operacionales = gimnasio.indicadores_operacionales()
 costos = gimnasio.calcular_costos()
 
-indicadores_totales = {}
-for nombre, valor in indicadores.items():
-    indicadores_totales[nombre] = valor
+metricas_totales = {}
+for nombre, valor in metricas.items():
+    metricas_totales[nombre] = valor
 
-for nombre, valor in indicadores_recursos.items():
-    indicadores_totales[nombre] = valor
+for nombre, valor in metricas_recursos.items():
+    metricas_totales[nombre] = valor
 
-for nombre, valor in indicadores_operacionales.items():
-    indicadores_totales[nombre] = valor
+for nombre, valor in metricas_operacionales.items():
+    metricas_totales[nombre] = valor
 
 

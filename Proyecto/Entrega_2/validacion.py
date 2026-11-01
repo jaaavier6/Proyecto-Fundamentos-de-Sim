@@ -10,7 +10,7 @@ alpha = 0.05
 datos_reales = pd.read_csv("validar_gimnasio.csv", sep=";", decimal=",")
 datos_reales.columns = datos_reales.columns.str.strip()
 
-datos_simulados = pd.read_csv("indicadores_300_replicas.csv", sep=";", decimal=",")
+datos_simulados = pd.read_csv("metricas_300_replicas.csv", sep=";", decimal=",")
 datos_simulados.columns = datos_simulados.columns.str.strip()
 
 llegadas_reales = datos_reales["arrivals"].to_numpy()
