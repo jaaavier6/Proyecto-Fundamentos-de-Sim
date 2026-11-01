@@ -55,8 +55,6 @@ print(tabla_cierre.round(4).to_string(index=False))
 print("\nMEDIDAS ADICIONALES")
 print(tabla_adicionales.round(4).to_string(index=False))
 
-
-"""
 nombres_franjas = ["07-10","10-13","13-16","16-19","19-21"]
 plt.figure()
 plt.plot(nombres_franjas,tabla_franjas["promedio"],marker="o")
@@ -64,8 +62,7 @@ plt.xlabel("Franja horaria")
 plt.ylabel("Espera promedio [min]")
 plt.title("Espera promedio por franja horaria")
 plt.tight_layout()
-plt.savefig("espera_por_franja.png")
-plt.close()
+plt.show()
 
 nombres_perfiles = ["Estándar","Express","Flexible","Intenso"]
 plt.figure()
@@ -74,8 +71,7 @@ plt.xlabel("Perfil")
 plt.ylabel("Tasa de finalización")
 plt.title("Finalización de rutinas por perfil")
 plt.tight_layout()
-plt.savefig("finalizacion_por_perfil.png")
-plt.close()
+plt.show()
 
 nombres_recursos = ["Trotadoras","Aperturas","Remo","Prensa piernas","Poleas"]
 plt.figure()
@@ -85,6 +81,4 @@ plt.ylabel("Utilización operacional")
 plt.title("Utilización operacional de máquinas")
 plt.xticks(rotation=20)
 plt.tight_layout()
-plt.savefig("utilizacion_recursos.png")
-plt.close()
-"""
+plt.show()
