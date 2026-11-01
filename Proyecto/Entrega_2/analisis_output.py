@@ -3,7 +3,7 @@ import numpy as np
 from scipy.stats import t
 import matplotlib.pyplot as plt
 
-datos = pd.read_csv("indicadores_300_replicas.csv",sep=";").head(200)
+datos = pd.read_csv("metricas_300_replicas.csv",sep=";").head(200)
 
 medidas = ["numero_llegadas","tasa_rechazo","ocupacion_promedio","proporcion_capacidad_maxima","espera_total_promedio","percentil_90_espera_total","espera_total_promedio_19_21","tasa_finalizacion_rutinas","tasa_finalizacion_rutinas_express","insatisfaccion_promedio_admitidos","utilizacion_operacional_trotadoras","utilizacion_operacional_aperturas_pecho","cola_promedio_aperturas_pecho","cola_promedio_remo_sentado","utilizacion_entrenadores","duracion_quiebres_agua","duracion_quiebres_toallas","numero_fallas_maquinas","espera_promedio_reparacion","minutos_operacion_postcierre"]
 
